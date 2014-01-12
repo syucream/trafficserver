@@ -13,7 +13,7 @@ msgstr ""
 
 #: ../../admin/configuring-cache.en.rst:4
 msgid "Configuring the Cache"
-msgstr ""
+msgstr "キャッシュの設定"
 
 #: ../../admin/configuring-cache.en.rst:23
 msgid ""
