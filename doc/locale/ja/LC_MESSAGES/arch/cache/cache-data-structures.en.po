@@ -118,7 +118,7 @@ msgstr ""
 
 #: ../../arch/cache/cache-data-structures.en.rst:90
 msgid ""
-"Array of of :cpp:class:`EvacuationBlock` buckets. This is sized so there is "
+"Array of :cpp:class:`EvacuationBlock` buckets. This is sized so there is "
 "one bucket for every evacuation span."
 msgstr ""
 
