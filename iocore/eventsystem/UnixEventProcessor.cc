@@ -151,6 +151,8 @@ EventProcessor::start(int n_event_threads, size_t stacksize)
       Debug("iocore_thread","EThread: %d %s: %d\n", i, obj_name, obj->logical_index);
 #endif // HWLOC_API_VERSION
       hwloc_set_thread_cpubind(ink_get_topology(), tid, obj->cpuset, HWLOC_CPUBIND_STRICT);
+    } else {
+      Warning("hwloc returned an unexpected value -- CPU affinity disabled");
     }
 #endif // TS_USE_HWLOC
   }

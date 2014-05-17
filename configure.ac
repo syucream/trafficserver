@@ -682,13 +682,13 @@ AC_ISC_POSIX
 
 AM_PATH_PYTHON([2.4], [
   dnl action-if-found
-  TS_MAN1_MANPAGES=`$PYTHON $srcdir/doc/conf.py --man-pages --section=1 | $AWK '{print "$(BUILDDIR)/man/" $0 }' | tr '\n' ' '`
-  TS_MAN3_MANPAGES=`$PYTHON $srcdir/doc/conf.py --man-pages --section=3 | $AWK '{print "$(BUILDDIR)/man/" $0 }' | tr '\n' ' '`
-  TS_MAN5_MANPAGES=`$PYTHON $srcdir/doc/conf.py --man-pages --section=5 | $AWK '{print "$(BUILDDIR)/man/" $0 }' | tr '\n' ' '`
-  TS_MAN8_MANPAGES=`$PYTHON $srcdir/doc/conf.py --man-pages --section=8 | $AWK '{print "$(BUILDDIR)/man/" $0 }' | tr '\n' ' '`
+  TS_MAN1_MANPAGES=`cd $srcdir/doc && $PYTHON manpages.py --section=1 | $AWK '{print "$(BUILDDIR)/man/" $0 }' | tr '\n' ' '`
+  TS_MAN3_MANPAGES=`cd $srcdir/doc && $PYTHON manpages.py --section=3 | $AWK '{print "$(BUILDDIR)/man/" $0 }' | tr '\n' ' '`
+  TS_MAN5_MANPAGES=`cd $srcdir/doc && $PYTHON manpages.py --section=5 | $AWK '{print "$(BUILDDIR)/man/" $0 }' | tr '\n' ' '`
+  TS_MAN8_MANPAGES=`cd $srcdir/doc && $PYTHON manpages.py --section=8 | $AWK '{print "$(BUILDDIR)/man/" $0 }' | tr '\n' ' '`
 
   # If we have python, check if the Sphinx version looks OK.
-  AS_IF(["$PYTHON" "$srcdir/doc/conf.py" --check-version], [
+  AS_IF(["$PYTHON" "$srcdir/doc/checkvers.py" --check-version], [
     sphinx_version_check=yes
   ])
 
@@ -1943,7 +1943,6 @@ AC_CONFIG_FILES([
   plugins/experimental/remap_stats/Makefile
   plugins/experimental/rfc5861/Makefile
   plugins/experimental/s3_auth/Makefile
-  plugins/experimental/spdy/Makefile
   plugins/experimental/ts_lua/Makefile
   plugins/experimental/url_sig/Makefile
   plugins/experimental/xdebug/Makefile
