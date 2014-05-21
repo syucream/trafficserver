@@ -1,6 +1,26 @@
                                                          -*- coding: utf-8 -*-
 Changes with Apache Traffic Server 5.0.0
 
+  *) [TS-2705] Make the background fill check more robust.
+
+  *) [TS-1411] Seg fault when using %<cquuc>
+
+  *) [TS-2739] ATS doesn't send back Transfer-Encoding when client keep-alive
+     is turned off
+
+  *) [TS-2253] PluginVC::process_close Segmentation fault
+
+  *) [TS-2823] Change the Mgmt API names TSEvent and TSError to avoid name
+     collisions with the plugin API.
+
+  *) [TS-2029] Eliminate CacheHttpHdr argument from Cache::generate_key().
+
+  *) [TS-2821] Added configuration for max concurrent streams for SPDY.
+
+  *) [TS-2558] Remove check for inbound transparency vs. SSL.
+
+  *) [TS-2810] Add the TSVConnFdCreate API.
+
   *) [TS-2342] Problem with cache.cache_responses_to_cookies value 0.
    Author: Paul Marquess <Paul.Marquess@owmobility.com>
 
