@@ -188,12 +188,6 @@ spdy_fetcher_launch(SpdyRequest *req, TSFetchMethod method)
   TSFetchUserDataSet(req->fetch_sm, req);
 
   //
-  // Set client protocol stack in FetchSM that needed by logging module
-  //
-  NetVConnection *netvc = (NetVConnection *)sm->vc;
-  TSFetchClientProtoStackSet(req->fetch_sm, netvc->proto_stack);
-
-  //
   // Set header list
   //
   for (size_t i = 0; i < req->headers.size(); i++) {
@@ -309,6 +303,10 @@ spdy_process_syn_stream_frame(SpdyClientSession *sm, SpdyRequest *req)
     spdy_fetcher_launch(req, TS_FETCH_METHOD_CONNECT);
   else if (req->method == "DELETE")
     spdy_fetcher_launch(req, TS_FETCH_METHOD_DELETE);
+  else if (req->method == "OPTIONS")
+    spdy_fetcher_launch(req, TS_FETCH_METHOD_OPTIONS);
+  else if (req->method == "TRACE")
+    spdy_fetcher_launch(req, TS_FETCH_METHOD_TRACE);
   else if (req->method == "LAST")
     spdy_fetcher_launch(req, TS_FETCH_METHOD_LAST);
   else

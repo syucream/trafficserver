@@ -215,7 +215,6 @@ TS_ARG_ENABLE_VAR([has], [tests])
 AC_SUBST(has_tests)
 AM_CONDITIONAL([BUILD_TESTS], [test 0 -ne $has_tests])
 
-AC_SUBST([ink_with_modules_def],["-DREC_BUILD_MGMT"])
 AC_SUBST([ink_with_modules_local],["-DLOCAL_MANAGER"])
 AC_SUBST([ink_with_modules_process],["-DPROCESS_MANAGER"])
 
@@ -790,9 +789,9 @@ AX_PROG_PERL_MODULES([ExtUtils::MakeMaker], AM_CONDITIONAL([BUILD_PERL_LIB], [tr
                                             AM_CONDITIONAL([BUILD_PERL_LIB], [false])
 )
 
-# Check for GNU-style -On and for Solaris Studio style -xOn.
+# Check for GNU-style -On optimization flags
 AC_MSG_CHECKING([checking whether to auto-set compiler optimization flags])
-has_optimizer_flags=`echo "$CFLAGS $CXXFLAGS" | ${AWK} '$0 !~ /-x?O.?/{print "no"}'`
+has_optimizer_flags=`echo "$CFLAGS $CXXFLAGS" | ${AWK} '$0 !~ /-O.?/{print "no"}'`
 AS_IF([test "x${has_optimizer_flags}" = "xno"],
 	[
 		optimizing_flags='-O3'
@@ -898,19 +897,6 @@ case $host_os_def in
     ;; # freebsd|kfreebsd)
 
   solaris)
-    AS_IF([test "x$ax_cv_c_compiler_vendor" = "xsun"], [
-      # XXX: Solaris Studio support is going away: https://issues.apache.org/jira/browse/TS-1486
-      common_opt="-mt -D__WORDSIZE=64" # FIXME: arch should be detected
-      debug_opt="-g $common_opt"
-      release_opt="-g $common_opt $optimizing_flags"
-      cxx_opt="-library=stlport4"
-      cxx_dbg="+w2"
-      cxx_rel="-erroff"
-
-      AC_DEFINE([_POSIX_PTHREAD_SEMANTICS], 1, [posix thread semantics])
-      AS_IF([test "x$solaris_use_stlport4" != "xyes"], [postdeps_CXX="-library=Crun"])
-    ])
-
     AS_IF([test "x$ax_cv_c_compiler_vendor" = "xgnu"], [
       common_opt="-pipe -Wall"
       debug_opt="-ggdb3 $common_opt"
@@ -988,9 +974,6 @@ if test "x${GCC}" = "xyes"; then
       i?86* | k[5-8]* | pentium* | athlon)
         cpu_architecture="-march=i586"
       ;;
-      *sparc*)
-        cpu_architecture="-mv8"
-      ;;
     esac
   else
     case "$host_cpu" in
@@ -998,13 +981,8 @@ if test "x${GCC}" = "xyes"; then
         # XXX: Any need for 64-bit arch flags?
         # cpu_architecture="-march=native"
       ;;
-      *sparc*)
-        cpu_architecture="-march=ultrasparc"
-      ;;
     esac
   fi
-  # TODO: Add support for other compilers
-  #
 fi
 
 # Overrride detected architecture with the user suplied one
@@ -1865,7 +1843,6 @@ AC_CONFIG_FILES([
   cmd/Makefile
   cmd/traffic_cop/Makefile
   cmd/traffic_line/Makefile
-  cmd/traffic_shell/Makefile
   cmd/traffic_top/Makefile
   doc/Doxyfile
   doc/Makefile
@@ -1941,8 +1918,8 @@ AC_CONFIG_FILES([
   plugins/experimental/hipes/Makefile
   plugins/experimental/metalink/Makefile
   plugins/experimental/remap_stats/Makefile
-  plugins/experimental/rfc5861/Makefile
   plugins/experimental/s3_auth/Makefile
+  plugins/experimental/stale_while_revalidate/Makefile
   plugins/experimental/ts_lua/Makefile
   plugins/experimental/url_sig/Makefile
   plugins/experimental/xdebug/Makefile

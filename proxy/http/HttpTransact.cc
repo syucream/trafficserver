@@ -851,7 +851,6 @@ HttpTransact::EndRemapRequest(State* s)
       build_error_response(s, HTTP_STATUS_MOVED_TEMPORARILY, "Redirect", "redirect#moved_temporarily",
                            "\"<em>%s</em>\".<p>", s->remap_redirect);
     }
-    s->hdr_info.client_response.value_set(MIME_FIELD_LOCATION, MIME_LEN_LOCATION, s->remap_redirect, strlen(s->remap_redirect));
     ats_free(s->remap_redirect);
     s->reverse_proxy = false;
     goto done;
@@ -886,6 +885,15 @@ HttpTransact::EndRemapRequest(State* s)
   ///////////////////////////////////////////////////////////////
 
   if (!s->url_remap_success) {
+    /**
+     * It's better to test redirect rules just after url_remap failed
+     * Or those successfully remapped rules might be redirected
+     **/
+    if (handleIfRedirect(s)) {
+      DebugTxn("http_trans", "END HttpTransact::RemapRequest");
+      TRANSACT_RETURN(SM_ACTION_INTERNAL_CACHE_NOOP, NULL);
+    }
+
     /////////////////////////////////////////////////////////
     // check for: (1) reverse proxy is on, and no URL host //
     /////////////////////////////////////////////////////////
@@ -945,16 +953,6 @@ HttpTransact::EndRemapRequest(State* s)
   s->server_info.is_transparent = s->state_machine->ua_session ? s->state_machine->ua_session->f_outbound_transparent : false;
 
 done:
-  /**
-   * Since we don't want to return 404 Not Found error if there's
-   * redirect rule, the function to do redirect is moved before
-   * sending the 404 error.
-   **/
-  if (handleIfRedirect(s)) {
-    DebugTxn("http_trans", "END HttpTransact::RemapRequest");
-    TRANSACT_RETURN(SM_ACTION_INTERNAL_CACHE_NOOP, NULL);
-  }
-
   if (is_debug_tag_set("http_chdr_describe") || is_debug_tag_set("http_trans") || is_debug_tag_set("url_rewrite")) {
     DebugTxn("http_trans", "After Remapping:");
     obj_describe(s->hdr_info.client_request.m_http, 1);
@@ -1247,9 +1245,9 @@ HttpTransact::handleIfRedirect(State *s)
   answer = request_url_remap_redirect(&s->hdr_info.client_request, &redirect_url);
   if ((answer == PERMANENT_REDIRECT) || (answer == TEMPORARY_REDIRECT)) {
     int remap_redirect_len;
-    char *remap_redirect;
 
-    remap_redirect = redirect_url.string_get_ref(&remap_redirect_len);
+    s->remap_redirect = redirect_url.string_get(&s->arena, &remap_redirect_len);
+    redirect_url.destroy();
     if (answer == TEMPORARY_REDIRECT) {
       if ((s->client_info).http_version.m_version == HTTP_VERSION(1, 1)) {
         build_error_response(s, HTTP_STATUS_TEMPORARY_REDIRECT,
@@ -1257,7 +1255,7 @@ HttpTransact::handleIfRedirect(State *s)
                              "Redirect", "redirect#moved_temporarily",
                              "%s <a href=\"%s\">%s</a>. %s",
                              "The document you requested is now",
-                             remap_redirect, remap_redirect, "Please update your documents and bookmarks accordingly");
+                             s->remap_redirect, s->remap_redirect, "Please update your documents and bookmarks accordingly");
       } else {
         build_error_response(s,
                              HTTP_STATUS_MOVED_TEMPORARILY,
@@ -1265,7 +1263,7 @@ HttpTransact::handleIfRedirect(State *s)
                              "redirect#moved_temporarily",
                              "%s <a href=\"%s\">%s</a>. %s",
                              "The document you requested is now",
-                             remap_redirect, remap_redirect, "Please update your documents and bookmarks accordingly");
+                             s->remap_redirect, s->remap_redirect, "Please update your documents and bookmarks accordingly");
       }
     } else {
       build_error_response(s,
@@ -1274,10 +1272,10 @@ HttpTransact::handleIfRedirect(State *s)
                            "redirect#moved_permanently",
                            "%s <a href=\"%s\">%s</a>. %s",
                            "The document you requested is now",
-                           remap_redirect, remap_redirect, "Please update your documents and bookmarks accordingly");
+                           s->remap_redirect, s->remap_redirect, "Please update your documents and bookmarks accordingly");
     }
-    s->hdr_info.client_response.value_set(MIME_FIELD_LOCATION, MIME_LEN_LOCATION, remap_redirect, remap_redirect_len);
-    redirect_url.destroy();
+    s->arena.str_free(s->remap_redirect);
+    s->remap_redirect = NULL;
     return true;
   }
 
@@ -1292,6 +1290,10 @@ HttpTransact::HandleRequest(State* s)
   ink_assert(!s->hdr_info.server_request.valid());
 
   HTTP_INCREMENT_TRANS_STAT(http_incoming_requests_stat);
+
+  if (s->client_info.port_attribute == HttpProxyPort::TRANSPORT_SSL) {
+    HTTP_INCREMENT_TRANS_STAT(https_incoming_requests_stat);
+  }
 
   if (s->api_release_server_session == true) {
     s->api_release_server_session = false;
@@ -1337,13 +1339,6 @@ HttpTransact::HandleRequest(State* s)
   if (handle_internal_request(s, &s->hdr_info.client_request)) {
     TRANSACT_RETURN(SM_ACTION_INTERNAL_REQUEST, NULL);
   }
-
-  // this needs to be called after initializing state variables from request
-  // it tries to handle the problem that MSIE only adds no-cache
-  // headers to reload requests when there is an explicit proxy --- the
-  // reload button does nothing in the case of transparent proxies.
-  if (s->http_config_param->cache_when_to_add_no_cache_to_msie_requests >= 0)
-    handle_msie_reload_badness(s, &s->hdr_info.client_request);
 
   // this needs to be called after initializing state variables from request
   // it adds the client-ip to the incoming client request.
@@ -1853,8 +1848,7 @@ HttpTransact::OSDNSLookup(State* s)
       StartAccessControl(s);    // If skip_dns is enabled and no ip based rules in cache.config and parent.config
       // Access Control is called after DNS response
     } else {
-      if ((s->cache_info.action == CACHE_DO_NO_ACTION) &&
-          (s->range_setup == RANGE_NOT_SATISFIABLE || s->range_setup == RANGE_NOT_HANDLED)) {
+      if ((s->cache_info.action == CACHE_DO_NO_ACTION) && s->hdr_info.client_request.presence(MIME_PRESENCE_RANGE)) {
         TRANSACT_RETURN(SM_ACTION_API_OS_DNS, HandleCacheOpenReadMiss);
       } else if (s->cache_lookup_result == HttpTransact::CACHE_LOOKUP_SKIPPED) {
         TRANSACT_RETURN(SM_ACTION_API_OS_DNS, LookupSkipOpenServer);
@@ -3091,7 +3085,7 @@ HttpTransact::HandleCacheOpenReadMiss(State* s)
   // We must, however, not cache the responses to these requests.
   if (does_method_require_cache_copy_deletion(s->method) && s->api_req_cacheable == false) {
     s->cache_info.action = CACHE_DO_NO_ACTION;
-  } else if (s->range_setup == RANGE_NOT_SATISFIABLE || s->range_setup == RANGE_NOT_HANDLED) {
+  } else if (s->hdr_info.client_request.presence(MIME_PRESENCE_RANGE)) {
     s->cache_info.action = CACHE_DO_NO_ACTION;
   } else {
     s->cache_info.action = CACHE_PREPARE_TO_WRITE;
@@ -5116,113 +5110,6 @@ HttpTransact::get_ka_info_from_host_db(State *s, ConnectionAttributes *server_in
   return;
 }
 
-//////////////////////////////////////////////////////////////////////////
-//
-// void HttpTransact::handle_msie_reload_badness(...)
-//
-// Microsoft Internet Explorer has a design flaw that is exposed with
-// transparent proxies.  The reload button only generates no-cache
-// headers when there is an explicit proxy.  When going to a reverse
-// proxy or when being transparently intercepted, no no-cache header is
-// added.  This means state content cannot be reloaded with MSIE.
-//
-// This routine attempts to provide some knobs to improve the situation
-// by explicitly adding no-cache to requests in certain scenarios.  In
-// the future we might want to adjust freshness lifetimes for MSIE
-// browsers.  Hopefully Microsoft will fix this in future versions of
-// their browser, and then we can conditionally test version numbers.
-//
-// Here are the options available:
-//   0: never add no-cache headers to MSIE requests
-//   1: add no-cache headers to IMS MSIE requests
-//   2: add no-cache headers to all MSIE requests
-//
-//////////////////////////////////////////////////////////////////////////
-
-void
-HttpTransact::handle_msie_reload_badness(State* s, HTTPHdr* client_request)
-{
-  int user_agent_value_len;
-  int has_ua_msie, has_no_cache, has_ims;
-  const char *user_agent_value, *c, *e;
-
-  //////////////////////////////////////////////
-  // figure out if User-Agent contains "MSIE" //
-  //////////////////////////////////////////////
-
-  has_ua_msie = 0;
-  user_agent_value = client_request->value_get(MIME_FIELD_USER_AGENT, MIME_LEN_USER_AGENT, &user_agent_value_len);
-  if (user_agent_value && user_agent_value_len >= 4) {
-    c = user_agent_value;
-    e = c + user_agent_value_len - 4;
-    while (1) {
-      c = (const char *) memchr(c, 'M', e - c);
-      if (c == NULL)
-        break;
-      if ((c[1] == 'S') && (c[2] == 'I') && (c[3] == 'E')) {
-        has_ua_msie = 1;
-        break;
-      }
-      c++;
-    }
-  }
-  ///////////////////////////////////////
-  // figure out if no-cache and/or IMS //
-  ///////////////////////////////////////
-
-  has_no_cache = (client_request->is_pragma_no_cache_set() || (client_request->is_cache_control_set(HTTP_VALUE_NO_CACHE)));
-  has_ims = (client_request->presence(MIME_PRESENCE_IF_MODIFIED_SINCE) != 0);
-
-  /////////////////////////////////////////////////////////
-  // increment some stats based on these three variables //
-  /////////////////////////////////////////////////////////
-
-  switch ((has_ims ? 4 : 0) + (has_no_cache ? 2 : 0) + (has_ua_msie ? 1 : 0)) {
-  case 0:
-    HTTP_INCREMENT_TRANS_STAT(http_request_taxonomy_i0_n0_m0_stat);
-    break;
-  case 1:
-    HTTP_INCREMENT_TRANS_STAT(http_request_taxonomy_i0_n0_m1_stat);
-    break;
-  case 2:
-    HTTP_INCREMENT_TRANS_STAT(http_request_taxonomy_i0_n1_m0_stat);
-    break;
-  case 3:
-    HTTP_INCREMENT_TRANS_STAT(http_request_taxonomy_i0_n1_m1_stat);
-    break;
-  case 4:
-    HTTP_INCREMENT_TRANS_STAT(http_request_taxonomy_i1_n0_m0_stat);
-    break;
-  case 5:
-    HTTP_INCREMENT_TRANS_STAT(http_request_taxonomy_i1_n0_m1_stat);
-    break;
-  case 6:
-    HTTP_INCREMENT_TRANS_STAT(http_request_taxonomy_i1_n1_m0_stat);
-    break;
-  case 7:
-    HTTP_INCREMENT_TRANS_STAT(http_request_taxonomy_i1_n1_m1_stat);
-    break;
-  }
-
-  //////////////////////////////////////////////////////////////////
-  // if MSIE no-cache addition is disabled, or this isn't an      //
-  //  MSIE browser, or if no-cache is already set, get outta here //
-  //////////////////////////////////////////////////////////////////
-
-  if ((s->http_config_param->cache_when_to_add_no_cache_to_msie_requests == 0) || (!has_ua_msie) || has_no_cache) {
-    return;
-  }
-  //////////////////////////////////////////////////////
-  // add a no-cache if mode and circumstances warrant //
-  //////////////////////////////////////////////////////
-
-  if ((s->http_config_param->cache_when_to_add_no_cache_to_msie_requests == 2) ||
-      ((s->http_config_param->cache_when_to_add_no_cache_to_msie_requests == 1) && has_ims)) {
-    client_request->value_append(MIME_FIELD_PRAGMA, MIME_LEN_PRAGMA, "no-cache", 8, true);
-  }
-}
-
-
 void
 HttpTransact::add_client_ip_to_outgoing_request(State* s, HTTPHdr* request)
 {
@@ -5549,7 +5436,7 @@ HttpTransact::handle_trace_and_options_requests(State* s, HTTPHdr* incoming_hdr)
 
       if (s->internal_msg_buffer_size <= max_iobuffer_size) {
         s->internal_msg_buffer_fast_allocator_size = buffer_size_to_index(s->internal_msg_buffer_size);
-        s->internal_msg_buffer = (char *) THREAD_ALLOC(ioBufAllocator[s->internal_msg_buffer_fast_allocator_size], this_thread());
+        s->internal_msg_buffer = (char *) ioBufAllocator[s->internal_msg_buffer_fast_allocator_size].alloc_void();
       } else {
         s->internal_msg_buffer_fast_allocator_size = -1;
         s->internal_msg_buffer = (char *)ats_malloc(s->internal_msg_buffer_size);
@@ -6098,7 +5985,7 @@ HttpTransact::is_request_cache_lookupable(State* s)
     }
   }
 
-  // Don't cache if it's a RANGE request but the cache is not enabled for RANGE.
+  // Don't look in cache if it's a RANGE request but the cache is not enabled for RANGE.
   if (!s->txn_conf->cache_range_lookup && s->hdr_info.client_request.presence(MIME_PRESENCE_RANGE)) {
     SET_VIA_STRING(VIA_DETAIL_TUNNEL, VIA_DETAIL_TUNNEL_HEADER_FIELD);
     return false;
@@ -7773,7 +7660,9 @@ HttpTransact::handle_server_died(State* s)
 bool
 HttpTransact::is_request_likely_cacheable(State* s, HTTPHdr* request)
 {
-  if ((s->method == HTTP_WKSIDX_GET || s->api_req_cacheable == true) && !request->presence(MIME_PRESENCE_AUTHORIZATION)) {
+  if ((s->method == HTTP_WKSIDX_GET || s->api_req_cacheable == true) &&
+      !request->presence(MIME_PRESENCE_AUTHORIZATION) &&
+      (!request->presence(MIME_PRESENCE_RANGE) || s->txn_conf->cache_range_write)) {
     return true;
   }
   return false;
@@ -7881,6 +7770,11 @@ HttpTransact::build_request(State* s, HTTPHdr* base_request, HTTPHdr* outgoing_r
       // instead of the normal non-conditional request.
       DebugTxn("http_trans", "[build_request] " "request not like cacheable and conditional headers not removed");
     }
+  }
+
+  if (s->http_config_param->send_100_continue_response) {
+    HttpTransactHeaders::remove_100_continue_headers(s, outgoing_request);
+    DebugTxn("http_trans", "[build_request] request expect 100-continue headers removed");
   }
 
   s->request_sent_time = ink_cluster_time();
@@ -8205,6 +8099,13 @@ HttpTransact::build_error_response(State *s, HTTPStatus status_code, const char 
   s->hdr_info.client_response.field_delete(MIME_FIELD_EXPIRES, MIME_LEN_EXPIRES);
   s->hdr_info.client_response.field_delete(MIME_FIELD_LAST_MODIFIED, MIME_LEN_LAST_MODIFIED);
 
+  if ((status_code == HTTP_STATUS_TEMPORARY_REDIRECT ||
+       status_code == HTTP_STATUS_MOVED_TEMPORARILY ||
+       status_code == HTTP_STATUS_MOVED_PERMANENTLY) &&
+      s->remap_redirect) {
+    s->hdr_info.client_response.value_set(MIME_FIELD_LOCATION, MIME_LEN_LOCATION, s->remap_redirect, strlen(s->remap_redirect));
+  }
+
 
 
   ////////////////////////////////////////////////////////////////////
@@ -8249,7 +8150,7 @@ HttpTransact::build_error_response(State *s, HTTPStatus status_code, const char 
     reason_phrase = reason_buffer;
   }
 
-  if (s->http_config_param->errors_log_error_pages) {
+  if (s->http_config_param->errors_log_error_pages && status_code >= HTTP_STATUS_BAD_REQUEST) {
     char ip_string[INET6_ADDRSTRLEN];
 
     Log::error("RESPONSE: sent %s status %d (%s) for '%s'", 
