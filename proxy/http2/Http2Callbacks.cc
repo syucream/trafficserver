@@ -282,10 +282,11 @@ http2_on_frame_recv_callback(nghttp2_session * session, const nghttp2_frame * fr
     break;
 
   case NGHTTP2_SETTINGS:
+    if (sm->write_vio) TSVIOReenable(sm->write_vio);
     break;
 
   case NGHTTP2_WINDOW_UPDATE:
-    TSVIOReenable(sm->write_vio);
+    if (sm->write_vio) TSVIOReenable(sm->write_vio);
     break;
 
   default:
