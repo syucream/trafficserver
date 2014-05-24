@@ -1,4 +1,9 @@
-/**
+/** @file
+
+  Http2SessionAccept
+
+  @section license License
+
   Licensed to the Apache Software Foundation (ASF) under one
   or more contributor license agreements.  See the NOTICE file
   distributed with this work for additional information
@@ -16,16 +21,28 @@
   limitations under the License.
  */
 
-/**
- * @file HttpVersion.cc
- */
+#ifndef Http2AcceptCont_H_
+#define Http2AcceptCont_H_
 
-#include "atscppapi/HttpVersion.h"
+#include "P_Net.h"
+#include "P_EventSystem.h"
+#include "P_UnixNet.h"
+#include "I_IOBuffer.h"
 
-const std::string atscppapi::HTTP_VERSION_STRINGS[] = { std::string("UNKNOWN"),
-                                                        std::string("HTTP/0.9"),
-                                                        std::string("HTTP/1.0"),
-                                                        std::string("HTTP/1.1"),
-                                                        std::string("HTTP/2"),
-                                                        };
+class Http2SessionAccept:public SessionAccept
+{
+public:
+  Http2SessionAccept(Continuation * ep);
+  ~Http2SessionAccept() {}
 
+  void accept(NetVConnection *, MIOBuffer *, IOBufferReader *);
+
+private:
+  int mainEvent(int event, void *netvc);
+  Http2SessionAccept(const Http2SessionAccept &);     // disabled
+  Http2SessionAccept & operator =(const Http2SessionAccept &);        // disabled
+
+  Continuation *endpoint;
+};
+
+#endif /* Http2AcceptCont_H_ */

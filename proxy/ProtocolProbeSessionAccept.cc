@@ -28,7 +28,7 @@
 
 struct ProtocolProbeTrampoline : public Continuation, public ProtocolProbeSessionAcceptEnums
 {
-  static const size_t minimum_read_size = 1;
+  static const size_t minimum_read_size = 4;
   static const unsigned buffer_size_index = CLIENT_CONNECTION_FIRST_READ_BUFFER_SIZE_INDEX;
 
   explicit
@@ -77,6 +77,10 @@ struct ProtocolProbeTrampoline : public Continuation, public ProtocolProbeSessio
     // that no other protocol could possibly ever set this bit!
     if ((uint8_t)(*reader->start()) == 0x80u) {
       key = PROTO_SPDY;
+    } else if ((uint8_t)(*reader->start())     == 'P' &&
+               (uint8_t)(*(reader->start()+1)) == 'R' &&
+               (uint8_t)(*(reader->start()+2)) == 'I') { // TODO: check strictly whether recv buffer contains client connection header or not.
+      key = PROTO_HTTP2;
     } else {
       key = PROTO_HTTP;
     }

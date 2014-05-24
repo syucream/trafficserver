@@ -395,6 +395,19 @@ AC_SUBST(has_spdy)
 AM_CONDITIONAL([BUILD_SPDY], [test 0 -ne $has_spdy])
 
 #
+# Options for HTTP2
+#
+AC_MSG_CHECKING([whether to enable http2])
+AC_ARG_ENABLE([http2],
+	[AS_HELP_STRING([--enable-http2], [turn on http2 protocol])],
+	[],
+	[enable_http2="no"])
+AC_MSG_RESULT([$enable_http2])
+TS_ARG_ENABLE_VAR([has], [http2])
+AC_SUBST(has_http2)
+AM_CONDITIONAL([BUILD_HTTP2], [test 0 -ne $has_http2])
+
+#
 # Configure how many stats to allocate for plugins. Default is 512.
 #
 AC_ARG_WITH([max-api-stats],
@@ -1422,6 +1435,11 @@ if test "x${enable_spdy}" = "xyes"; then
   PKG_CHECK_MODULES([SPDYLAY],[libspdylay])
 fi
 
+# Check for nghttp2 library
+if test "x${enable_http2}" = "xyes"; then
+  PKG_CHECK_MODULES([NGHTTP2],[libnghttp2])
+fi
+
 # -----------------------------------------------------------------------------
 # 5. CHECK FOR HEADER FILES
 
@@ -1947,6 +1965,7 @@ AC_CONFIG_FILES([
   proxy/logging/Makefile
   proxy/shared/Makefile
   proxy/spdy/Makefile
+  proxy/http2/Makefile
   rc/Makefile
   rc/trafficserver
   rc/trafficserver.conf

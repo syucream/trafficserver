@@ -395,8 +395,18 @@ http_hdr_version_to_string(int32_t version, char *buf9)
   buf9[3] = 'P';
   buf9[4] = '/';
   buf9[5] = '0' + HTTP_MAJOR(version);
+#if TS_HAS_HTTP2
+  if (HTTP_MAJOR(version) >= 2) {
+    buf9[6] = '\0';
+    buf9[7] = '\0';
+  } else {
+    buf9[6] = '.';
+    buf9[7] = '0' + HTTP_MINOR(version);
+  }
+#else
   buf9[6] = '.';
   buf9[7] = '0' + HTTP_MINOR(version);
+#endif
   buf9[8] = '\0';
 
   return (buf9);
@@ -461,7 +471,7 @@ http_hdr_print(HdrHeap *heap, HTTPHdrImpl *hdr, char *buf, int bufsize, int *buf
 
       if (bufsize - *bufindex >= 9) {
         http_hdr_version_to_string(hdr->m_version, p);
-        *bufindex += 9 - 1;     // overwrite '\0';
+        *bufindex += 9 - (*(p + 6) == '\0' ? 3 : 1);     // overwrite '\0';
       } else {
         TRY(http_version_print(hdr->m_version, buf, bufsize, bufindex, dumpoffset));
       }
@@ -501,9 +511,10 @@ http_hdr_print(HdrHeap *heap, HTTPHdrImpl *hdr, char *buf, int bufsize, int *buf
 
       p = buf + *bufindex;
       http_hdr_version_to_string(hdr->m_version, p);
-      p += 8;                   // overwrite '\0' with space
+      tmplen = 9 - (*(p + 6) == '\0' ? 3 : 1);    // overwrite '\0' with space
+      p += tmplen;
       *p++ = ' ';
-      *bufindex += 9;
+      *bufindex += tmplen + 1;
 
       hdrstat = http_hdr_status_get(hdr);
       if (hdrstat == 200) {
@@ -1010,6 +1021,10 @@ http_parser_parse_req(HTTPParser *parser, HdrHeap *heap, HTTPHdrImpl *hh, const 
       GETPREV(parse_url);
       goto parse_version3;
     }
+    if (*cur == '/') {
+      GETPREV(parse_url);
+      goto parse_version4;
+    }
     goto parse_url;
   parse_version3:
     if (ParseRules::is_digit(*cur)) {
@@ -1200,6 +1215,11 @@ http_parser_parse_resp(HTTPParser *parser, HdrHeap *heap, HTTPHdrImpl *hh, const
       GETNEXT(eoh);
       goto parse_version3;
     }
+    if (ParseRules::is_ws(*cur)) {
+      version_end = cur;
+      GETNEXT(eoh);
+      goto parse_status1;
+    }
     goto eoh;
   parse_version3:
     if (ParseRules::is_digit(*cur)) {
@@ -1296,8 +1316,7 @@ http_parse_version(const char *start, const char *end)
 {
   int maj;
   int min;
-
-  if ((end - start) < 8) {
+  if ((end - start) < 6) {
     return HTTP_VERSION(0, 9);
   }
 
@@ -1314,13 +1333,15 @@ http_parse_version(const char *start, const char *end)
       start += 1;
     }
 
-    if (*start == '.') {
-      start += 1;
-    }
+    if (start != end) {
+        if (*start == '.') {
+          start += 1;
+        }
 
-    while ((start != end) && ParseRules::is_digit(*start)) {
-      min = (min * 10) + (*start - '0');
-      start += 1;
+        while ((start != end) && ParseRules::is_digit(*start)) {
+          min = (min * 10) + (*start - '0');
+          start += 1;
+        }
     }
 
     return HTTP_VERSION(maj, min);

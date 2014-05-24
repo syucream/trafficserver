@@ -222,6 +222,11 @@ HttpVersion utils::internal::getHttpVersion(TSMBuffer hdr_buf, TSMLoc hdr_loc) {
     }
     if ((TS_HTTP_MAJOR(version) == 1) && (TS_HTTP_MINOR(version) == 1)) {
       return HTTP_VERSION_1_1;
+#if TS_HAS_HTTP2
+    }
+    if ((TS_HTTP_MAJOR(version) == 2) && (TS_HTTP_MINOR(version) == 0)) {
+      return HTTP_VERSION_2;
+#endif
     } else {
       LOG_ERROR("Unrecognized version %d", version);
     }

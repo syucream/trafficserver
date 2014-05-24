@@ -29,6 +29,7 @@
 
 #include <ts/ts.h>
 #include <string>
+#include "ink_config.h"
 #include "atscppapi/GlobalPlugin.h"
 #include "atscppapi/TransactionPlugin.h"
 #include "atscppapi/TransformationPlugin.h"

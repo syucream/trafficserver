@@ -53,6 +53,9 @@ public:
   static void convert_to_0_9_response_header(HTTPHdr * outgoing_response);
   static void convert_to_1_0_response_header(HTTPHdr * outgoing_response);
   static void convert_to_1_1_response_header(HTTPHdr * outgoing_response);
+#if TS_HAS_HTTP2
+  static void convert_to_2_0_response_header(HTTPHdr * outgoing_response);
+#endif
 
   static ink_time_t calculate_document_age(ink_time_t request_time, ink_time_t response_time,
                                            HTTPHdr * base_response, ink_time_t base_response_date, ink_time_t now);

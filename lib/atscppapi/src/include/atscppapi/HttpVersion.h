@@ -37,6 +37,7 @@ enum HttpVersion {
   HTTP_VERSION_0_9,
   HTTP_VERSION_1_0,
   HTTP_VERSION_1_1,
+  HTTP_VERSION_2,
 };
 
 /**

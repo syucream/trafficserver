@@ -264,6 +264,10 @@ HttpTransactHeaders::convert_response(HTTPVersion outgoing_ver, HTTPHdr *outgoin
     convert_to_1_0_response_header(outgoing_response);
   } else if (outgoing_ver == HTTPVersion(1, 1)) {
     convert_to_1_1_response_header(outgoing_response);
+#if TS_HAS_HTTP2
+  } else if (outgoing_ver == HTTPVersion(2, 0)) {
+    convert_to_2_0_response_header(outgoing_response);
+#endif
   } else if (outgoing_ver == HTTPVersion(0, 9)) {
     // Http 0.9 is a special case - do not bother copying over fields,
     // because they will all need to be removed anyway.
@@ -381,6 +385,20 @@ HttpTransactHeaders::convert_to_1_1_response_header(HTTPHdr *outgoing_response)
   outgoing_response->version_set(HTTPVersion(1, 1));
 }
 
+#if TS_HAS_HTTP2
+////////////////////////////////////////////////////////////////////////
+// Take an existing outgoing response header and make it HTTP/1.1
+void
+HttpTransactHeaders::convert_to_2_0_response_header(HTTPHdr *outgoing_response)
+{
+  // These are required
+  ink_assert(outgoing_response->status_get());
+
+  // Set HTTP version to 2
+  outgoing_response->version_set(HTTPVersion(2, 0));
+}
+
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // Name       : calculate_document_age()

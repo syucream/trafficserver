@@ -1124,7 +1124,7 @@ extern "C"
   extern tsapi const char * const TS_NPN_PROTOCOL_HTTP_0_9;
   extern tsapi const char * const TS_NPN_PROTOCOL_HTTP_1_0;
   extern tsapi const char * const TS_NPN_PROTOCOL_HTTP_1_1;
-  extern tsapi const char * const TS_NPN_PROTOCOL_HTTP_2_0;
+  extern tsapi const char * const TS_NPN_PROTOCOL_HTTP_2;
   extern tsapi const char * const TS_NPN_PROTOCOL_SPDY_1;
   extern tsapi const char * const TS_NPN_PROTOCOL_SPDY_2;
   extern tsapi const char * const TS_NPN_PROTOCOL_SPDY_3;
@@ -1137,7 +1137,7 @@ extern "C"
   extern tsapi int TS_NPN_PROTOCOL_INDEX_SPDY_2;
   extern tsapi int TS_NPN_PROTOCOL_INDEX_SPDY_3;
   extern tsapi int TS_NPN_PROTOCOL_INDEX_SPDY_3_1;
-  extern tsapi int TS_NPN_PROTOCOL_INDEX_HTTP_2_0;
+  extern tsapi int TS_NPN_PROTOCOL_INDEX_HTTP_2;
 
   extern tsapi const char * const TS_NPN_PROTOCOL_GROUP_HTTP;
   extern tsapi const char * const TS_NPN_PROTOCOL_GROUP_HTTP2;

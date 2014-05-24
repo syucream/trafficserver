@@ -367,7 +367,7 @@ Log::init_fields()
 
 # if 0
   Ptr<LogFieldAliasTable> proto_type_map = make_ptr(NEW(new LogFieldAliasTable));
-  proto_type_map->init(7,
+  proto_type_map->init(8,
                        // Transport protocols
                        TS_PROTO_UDP, "UDP",
                        TS_PROTO_TCP, "TCP",
@@ -376,7 +376,8 @@ Log::init_fields()
                        TS_PROTO_HTTP, "HTTP",
                        TS_PROTO_SPDY, "SPDY",
                        TS_PROTO_RTMP, "RTMP",
-                       TS_PROTO_WS,   "WS");
+                       TS_PROTO_WS,   "WS",
+                       TS_PROTO_HTTP2, "HTTP2");
 
   field = NEW(new LogField("client_protocol_stack", "cps",
                            LogField::sINT,

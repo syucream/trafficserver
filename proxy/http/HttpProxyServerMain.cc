@@ -37,6 +37,7 @@
 #include "P_SSLNextProtocolAccept.h"
 #include "ProtocolProbeSessionAccept.h"
 #include "SpdySessionAccept.h"
+#include "Http2SessionAccept.h"
 
 HttpSessionAccept *plugin_http_accept = NULL;
 HttpSessionAccept *plugin_http_transparent_accept = 0;
@@ -182,6 +183,12 @@ MakeHttpProxyAcceptor(HttpProxyAcceptor& acceptor, HttpProxyPort& port, unsigned
 #endif
 
 
+#if TS_HAS_HTTP2
+  Http2SessionAccept *http2 = NEW(new Http2SessionAccept(http));
+  probe->registerEndpoint(ProtocolProbeSessionAccept::PROTO_HTTP2, http2);
+#endif
+
+
   if (port.isSSL()) {
     SSLNextProtocolAccept *ssl = NEW(new SSLNextProtocolAccept(probe));
 
@@ -204,6 +211,12 @@ MakeHttpProxyAcceptor(HttpProxyAcceptor& acceptor, HttpProxyPort& port, unsigned
       ssl->registerEndpoint(TS_NPN_PROTOCOL_SPDY_3, spdy);
     if (port.m_session_protocol_preference.contains(TS_NPN_PROTOCOL_INDEX_SPDY_3_1))
       ssl->registerEndpoint(TS_NPN_PROTOCOL_SPDY_3_1, spdy);
+#endif
+
+    // HTTP2
+#if TS_HAS_HTTP2
+    if (port.m_session_protocol_preference.contains(TS_NPN_PROTOCOL_INDEX_HTTP_2))
+      ssl->registerEndpoint(TS_NPN_PROTOCOL_HTTP_2, http2);
 #endif
 
     ink_scoped_mutex lock(ssl_plugin_mutex);
