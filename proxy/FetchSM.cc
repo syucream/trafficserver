@@ -75,6 +75,18 @@ FetchSM::httpConnect()
   Debug(DEBUG_TAG, "[%s] calling httpconnect write", __FUNCTION__);
   http_vc = reinterpret_cast<PluginVC*>(TSHttpConnectWithPluginId(&_addr.sa, tag, id));
 
+  /*
+   * TS-2906: We need a way to unset internal request when using FetchSM, the use case for this
+   * is SPDY when it creates outgoing requests it uses FetchSM and the outgoing requests
+   * are spawned via SPDY SYN packets which are definitely not internal requests.
+   */
+  if (!is_internal_request) {
+    PluginVC* other_side = reinterpret_cast<PluginVC*>(http_vc)->get_other_side();
+    if (other_side != NULL) {
+      other_side->set_is_internal_request(false);
+    }
+  }
+
   read_vio = http_vc->do_io_read(this, INT64_MAX, resp_buffer);
   write_vio = http_vc->do_io_write(this, getReqLen() + req_content_length, req_reader);
 }
@@ -153,7 +165,6 @@ FetchSM::check_chunked()
   int ret;
   StrList slist;
   HTTPHdr *hdr = &client_response_hdr;
-
   if (resp_is_chunked >= 0)
     return resp_is_chunked;
 
@@ -310,7 +321,8 @@ FetchSM::get_info_from_buffer(IOBufferReader *the_reader)
   info = (char *)ats_malloc(sizeof(char) * (read_avail+1));
   client_response = info;
 
-  if (!check_chunked()) {
+  // To maintain backwards compatability we don't allow chunking when it's not streaming.
+  if (!(fetch_flags & TS_FETCH_FLAGS_STREAM) || !check_chunked()) {
     /* Read the data out of the reader */
     while (read_avail > 0) {
       if (reader->block != NULL)
@@ -373,11 +385,26 @@ FetchSM::process_fetch_read(int event)
   Debug(DEBUG_TAG, "[%s] I am here read", __FUNCTION__);
   int64_t bytes;
   int bytes_used;
+  int64_t total_bytes_copied = 0;
 
   switch (event) {
   case TS_EVENT_VCONN_READ_READY:
     bytes = resp_reader->read_avail();
     Debug(DEBUG_TAG, "[%s] number of bytes in read ready %" PRId64, __FUNCTION__, bytes);
+
+
+    while (total_bytes_copied < bytes) {
+       int64_t actual_bytes_copied;
+       actual_bytes_copied = resp_buffer->write(resp_reader, bytes, 0);
+       Debug(DEBUG_TAG, "[%s] copied %" PRId64 " bytes", __FUNCTION__, actual_bytes_copied);
+       if (actual_bytes_copied <= 0) {
+           break;
+       }
+       total_bytes_copied += actual_bytes_copied;
+    }
+    Debug(DEBUG_TAG, "[%s] total copied %" PRId64 " bytes", __FUNCTION__, total_bytes_copied);
+    resp_reader->consume(total_bytes_copied);
+
     if (header_done == 0 && ((fetch_flags & TS_FETCH_FLAGS_STREAM) || callback_options == AFTER_HEADER)) {
       if (client_response_hdr.parse_resp(&http_parser, resp_reader, &bytes_used, 0) == PARSE_DONE) {
         header_done = 1;
@@ -389,8 +416,6 @@ FetchSM::process_fetch_read(int event)
     } else {
       if (fetch_flags & TS_FETCH_FLAGS_STREAM)
         return InvokePluginExt();
-      else
-        InvokePlugin(TS_FETCH_EVENT_EXT_BODY_READY, this);
     }
     read_vio->reenable();
     break;
@@ -481,6 +506,9 @@ FetchSM::ext_init(Continuation *cont, TSFetchMethod method,
   // Enable stream IO automatically.
   //
   fetch_flags = (TS_FETCH_FLAGS_STREAM | flags);
+  if (fetch_flags & TS_FETCH_FLAGS_NOT_INTERNAL_REQUEST) {
+    set_internal_request(false);
+  }
 
   //
   // These options are not used when enable

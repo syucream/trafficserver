@@ -16,20 +16,6 @@
 
 include $(top_srcdir)/build/plugins.mk
 
-if BUILD_LUA_SUPPORT
-
-# We have to use the per-target CPPFLAGS here to make sure that the Lua include
-# path comes first. If we have LuaJIT (/opt/local/include/luajit-2.0) and Lua
-# (/opt/local/include) headers, then we need to make sure that we don't end up
-# building with the Lua headers but linking LuaJIT.
-lua_la_CPPFLAGS = \
-  $(LUA_CFLAGS) \
-  $(AM_CPPFLAGS)
-
-pkglib_LTLIBRARIES = lua.la
-
-lua_la_LIBADD = $(LUA_LIBS)
-lua_la_SOURCES = remap.cc plugin.cc lapi.cc lutil.cc lconfig.cc hook.cc state.cc
-lua_la_LDFLAGS = $(TS_PLUGIN_LDFLAGS)
-
-endif
+pkglib_LTLIBRARIES = regex_revalidate.la
+regex_revalidate_la_SOURCES = regex_revalidate.c
+regex_revalidate_la_LDFLAGS = $(TS_PLUGIN_LDFLAGS)

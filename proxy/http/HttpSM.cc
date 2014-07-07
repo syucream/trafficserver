@@ -326,7 +326,7 @@ HttpSM::HttpSM()
     cache_response_hdr_bytes(0), cache_response_body_bytes(0),
     pushed_response_hdr_bytes(0), pushed_response_body_bytes(0),
     plugin_tag(0), plugin_id(0),
-    hooks_set(0), cur_hook_id(TS_HTTP_LAST_HOOK), cur_hook(NULL),
+    hooks_set(false), cur_hook_id(TS_HTTP_LAST_HOOK), cur_hook(NULL),
     cur_hooks(0), callout_state(HTTP_API_NO_CALLOUT), terminate_sm(false), kill_this_async_done(false)
 {
   static int scatter_init = 0;
@@ -529,7 +529,7 @@ HttpSM::attach_client_session(HttpClientSession * client_vc, IOBufferReader * bu
 
   ua_session = client_vc;
   mutex = client_vc->mutex;
-  if (ua_session->debug_on) debug_on = true;
+  if (ua_session->debug()) debug_on = true;
 
   start_sub_sm();
 
@@ -544,13 +544,13 @@ HttpSM::attach_client_session(HttpClientSession * client_vc, IOBufferReader * bu
   ats_ip_copy(&t_state.client_info.addr, netvc->get_remote_addr());
   t_state.client_info.port = netvc->get_local_port();
   t_state.client_info.is_transparent = netvc->get_is_transparent();
-  t_state.backdoor_request = client_vc->backdoor_connect;
+  t_state.backdoor_request = !client_vc->hooks_enabled();
   t_state.client_info.port_attribute = static_cast<HttpProxyPort::TransportType>(netvc->attributes);
 
   HTTP_INCREMENT_DYN_STAT(http_current_client_transactions_stat);
 
   // Record api hook set state
-  hooks_set = http_global_hooks->has_hooks() || client_vc->hooks_set;
+  hooks_set = client_vc->has_hooks();
 
   // Setup for parsing the header
   ua_buffer_reader = buffer_reader;
@@ -718,8 +718,8 @@ HttpSM::state_read_client_request_header(int event, void *data)
       call_transact_and_set_next_state(HttpTransact::BadRequest);
       break;
     } else if (event == VC_EVENT_READ_COMPLETE) {
-	DebugSM("http_parse", "[%" PRId64 "] VC_EVENT_READ_COMPLETE and PARSE CONT state", sm_id);
-	break;
+      DebugSM("http_parse", "[%" PRId64 "] VC_EVENT_READ_COMPLETE and PARSE CONT state", sm_id);
+      break;
     } else {
       if (is_transparent_passthrough_allowed() &&
           ua_raw_buffer_reader != NULL &&
@@ -2792,7 +2792,6 @@ HttpSM::tunnel_handler_server(int event, HttpTunnelProducer * p)
       break;
     case VC_EVENT_EOS:
       t_state.current.server->state = HttpTransact::TRANSACTION_COMPLETE;
-      t_state.squid_codes.log_code = SQUID_LOG_ERR_READ_ERROR;
       break;
     }
 
@@ -2805,6 +2804,7 @@ HttpSM::tunnel_handler_server(int event, HttpTunnelProducer * p)
       t_state.current.server->abort = HttpTransact::ABORTED;
       t_state.client_info.keep_alive = HTTP_NO_KEEPALIVE;
       t_state.current.server->keep_alive = HTTP_NO_KEEPALIVE;
+      t_state.squid_codes.log_code = SQUID_LOG_ERR_READ_ERROR;
     } else {
       DebugSM("http", "[%" PRId64 "] [HttpSM::tunnel_handler_server] finishing HTTP tunnel", sm_id);
       p->read_success = true;
@@ -3295,6 +3295,7 @@ HttpSM::tunnel_handler_post_ua(int event, HttpTunnelProducer * p)
     // Completed successfully
     if (t_state.txn_conf->keep_alive_post_out == 0) {
       // don't share the session if keep-alive for post is not on
+      DebugSM("http_ss", "Setting server session to private because of keep-alive post out");
       set_server_session_private(true);
     }
 
@@ -4037,6 +4038,8 @@ HttpSM::parse_range_and_compare(MIMEField *field, int64_t content_length)
 
   if (content_length <= 0)
     return;
+
+  // ToDo: Can this really happen?
   if (content_length == INT64_MAX) {
     t_state.range_setup = HttpTransact::RANGE_NOT_HANDLED;
     return;
@@ -5534,6 +5537,7 @@ HttpSM::attach_server_session(HttpServerSession * s)
   }
 
   if (plugin_tunnel_type != HTTP_NO_PLUGIN_TUNNEL) {
+    DebugSM("http_ss", "Setting server session to private");
     server_session->private_session = true;
   }
 }
@@ -5580,6 +5584,7 @@ HttpSM::setup_server_send_request()
   if (t_state.hdr_info.server_request.presence(MIME_PRESENCE_AUTHORIZATION | MIME_PRESENCE_PROXY_AUTHORIZATION
 					       | MIME_PRESENCE_WWW_AUTHENTICATE)) {
       server_session->private_session = true;
+      DebugSM("http_ss", "Setting server session to private for authorization header");
   }
   milestones.server_begin_write = ink_get_hrtime();
   server_entry->write_vio = server_entry->vc->do_io_write(this, hdr_length, buf_start);
@@ -7588,6 +7593,8 @@ HttpSM::is_redirect_required()
 {
   bool redirect_required = (enable_redirection && (redirection_tries <= HttpConfig::m_master.number_of_redirections));
 
+  DebugSM("http_redirect", "is_redirect_required %u", redirect_required);
+
   if (redirect_required == true) {
     HTTPStatus status = t_state.hdr_info.client_response.status_get();
     // check to see if the response from the orgin was a 301, 302, or 303
@@ -7609,8 +7616,6 @@ HttpSM::is_redirect_required()
     // if redirect_url is set by an user's plugin, ats will redirect to this url anyway.
     if (redirect_url != NULL) {
       redirect_required = true;
-    } else {
-      redirect_required = false;
     }
   }
   return redirect_required;

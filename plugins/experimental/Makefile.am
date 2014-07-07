@@ -14,14 +14,13 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-if BUILD_EXPERIMENTAL_PLUGINS
-
 SUBDIRS = \
  authproxy \
  background_fetch \
  balancer \
  buffer_upload \
  channel_stats \
+ collapsed_connection \
  custom_redirect \
  escalate \
  esi \
@@ -29,11 +28,13 @@ SUBDIRS = \
  healthchecks \
  hipes \
  metalink \
+ regex_revalidate \
  remap_stats \
  s3_auth \
  stale_while_revalidate \
- ts_lua \
  url_sig \
  xdebug
 
+if BUILD_LUAJIT
+  SUBDIRS += ts_lua
 endif

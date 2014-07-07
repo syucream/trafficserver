@@ -805,7 +805,7 @@ adjust_sys_settings(void)
     ats_mallopt(ATS_MMAP_MAX, mmap_max);
 
   if ((fd = fopen("/proc/sys/fs/file-max","r"))) {
-    ATS_UNUSED_RETURN(fscanf(fd, "%lu", &lim.rlim_max));
+    ATS_UNUSED_RETURN(fscanf(fd, "%" PRIu64 "", &lim.rlim_max));
     fclose(fd);
     REC_ReadConfigFloat(file_max_pct, "proxy.config.system.file_max_pct");
     lim.rlim_cur = lim.rlim_max = static_cast<rlim_t>(lim.rlim_max * file_max_pct);
@@ -1101,7 +1101,7 @@ chdir_root()
 static int
 getNumSSLThreads(void)
 {
-  int num_of_ssl_threads = 0;
+  int num_of_ssl_threads = -1;
 
   // Set number of ssl threads equal to num of processors if
   // SSL is enabled so it will scale properly. If SSL is not
@@ -1112,8 +1112,10 @@ getNumSSLThreads(void)
 
     REC_ReadConfigInteger(config_num_ssl_threads, "proxy.config.ssl.number.threads");
 
-    if (config_num_ssl_threads != 0) {
+    if (config_num_ssl_threads > 0) {
       num_of_ssl_threads = config_num_ssl_threads;
+    } else if (config_num_ssl_threads == -1) {
+      return -1; // This will disable ET_SSL threads entirely
     } else {
       float autoconfig_scale = 1.5;
 

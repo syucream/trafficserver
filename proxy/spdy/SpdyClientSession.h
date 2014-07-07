@@ -77,7 +77,7 @@ public:
   bool has_submitted_data;
   bool need_resume_data;
   int fetch_data_len;
-  int delta_window_size;
+  unsigned delta_window_size;
   bool fetch_body_completed;
   vector<pair<string, string> > headers;
 
@@ -135,7 +135,7 @@ private:
   int state_session_readwrite(int event, void * edata);
 };
 
-void spdy_sm_create(NetVConnection * netvc, spdy::SessionVersion vers, MIOBuffer * iobuf, IOBufferReader * reader);
+void spdy_cs_create(NetVConnection * netvc, spdy::SessionVersion vers, MIOBuffer * iobuf, IOBufferReader * reader);
 
 extern ClassAllocator<SpdyRequest> spdyRequestAllocator;
 

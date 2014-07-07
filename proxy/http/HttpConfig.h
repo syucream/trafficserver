@@ -53,12 +53,6 @@
 
 #include "P_RecProcess.h"
 
-
-/* Some defines that might be candidates for configurable settings later.
- */
-#define HTTP_SSN_TXN_MAX_USER_ARG         16   /* max number of user arguments for Transactions and Sessions */
-
-
 /* Instead of enumerating the stats in DynamicStats.h, each module needs
    to enumerate its stats separately and register them with librecords
    */
@@ -338,7 +332,7 @@ enum
   http_response_status_5xx_count_stat,
 
   https_incoming_requests_stat,
-  https_connection_count_stat,
+  https_total_client_connections_stat,
 
   http_stat_count
 };
@@ -398,7 +392,7 @@ struct OverridableHttpConfigParams {
   OverridableHttpConfigParams()
     : maintain_pristine_host_hdr(1), chunking_enabled(1),
       negative_caching_enabled(0), negative_revalidating_enabled(0), cache_when_to_revalidate(0),
-      keep_alive_enabled_in(1), keep_alive_enabled_out(1), keep_alive_post_out(0),
+      keep_alive_enabled_in(1), keep_alive_enabled_out(1), keep_alive_post_out(1),
       server_session_sharing_match(TS_SERVER_SESSION_SHARING_MATCH_BOTH),
       server_session_sharing_pool(TS_SERVER_SESSION_SHARING_POOL_THREAD),
       fwd_proxy_auth_to_parent(0), insert_age_in_response(1),
