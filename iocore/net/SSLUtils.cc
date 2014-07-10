@@ -972,8 +972,8 @@ SSLInitServerContext(
   }
 
   if (!params->serverCertChainFilename && !sslMultCertSettings.ca && sslMultCertSettings.cert) {
-    SimpleTokenizer cert_tok(sslMultCertSettings.cert, SSL_CERT_SEPARATE_DELIM);
-    SimpleTokenizer key_tok((char *)(sslMultCertSettings.key ? (const char *)sslMultCertSettings.key : ats_strdup("")), SSL_CERT_SEPARATE_DELIM);
+    SimpleTokenizer cert_tok((const char *)sslMultCertSettings.cert, SSL_CERT_SEPARATE_DELIM);
+    SimpleTokenizer key_tok((sslMultCertSettings.key ? (const char *)sslMultCertSettings.key : ""), SSL_CERT_SEPARATE_DELIM);
 
     if (sslMultCertSettings.key && cert_tok.getNumTokensRemaining() != key_tok.getNumTokensRemaining()) {
         Error("the number of certificates in ssl_cert_name and ssl_key_name doesn't match");
@@ -994,7 +994,7 @@ SSLInitServerContext(
     }
   } else if (sslMultCertSettings.first_cert) { // For backward compatible
       completeServerCertPath = Layout::relative_to(params->serverCertPathOnly, sslMultCertSettings.first_cert);
-      if (!SSL_CTX_use_certificate_file(ctx, completeServerCertPath, SSL_FILETYPE_PEM)) {
+      if (!SSL_CTX_use_certificate_chain_file(ctx, completeServerCertPath)) {
           SSLError("failed to load certificate from %s", (const char *) completeServerCertPath);
           goto fail;
       }
@@ -1102,7 +1102,7 @@ SSLInitClientContext(const SSLConfigParams * params)
   }
 
   if (params->clientCertPath != 0) {
-    if (!SSL_CTX_use_certificate_file(client_ctx, params->clientCertPath, SSL_FILETYPE_PEM)) {
+    if (!SSL_CTX_use_certificate_chain_file(client_ctx, params->clientCertPath)) {
       SSLError("failed to load client certificate from %s", params->clientCertPath);
       goto fail;
     }
