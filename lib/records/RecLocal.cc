@@ -29,6 +29,8 @@
 #include "P_RecMessage.h"
 #include "P_RecUtils.h"
 #include "P_RecFile.h"
+#include "LocalManager.h"
+#include "FileManager.h"
 
 static bool g_initialized = false;
 static bool g_message_initialized = false;
@@ -55,20 +57,14 @@ i_am_the_record_owner(RecT rec_type)
 }
 
 //-------------------------------------------------------------------------
-//
-// REC_BUILD_MGMT IMPLEMENTATION
-//
-//-------------------------------------------------------------------------
-#include "Main.h"
-
-
-//-------------------------------------------------------------------------
 // sync_thr
 //-------------------------------------------------------------------------
 static void *
-sync_thr(void *data)
+sync_thr(void * data)
 {
   textBuffer *tb = new textBuffer(65536);
+  FileManager * configFiles = (FileManager *)data;
+
   Rollback *rb;
   bool inc_version;
   bool written;
@@ -108,7 +104,7 @@ sync_thr(void *data)
 // config_update_thr
 //-------------------------------------------------------------------------
 static void *
-config_update_thr(void *data)
+config_update_thr(void * /* data */)
 {
   while (true) {
     RecExecConfigUpdateCbs(REC_LOCAL_UPDATE_REQUIRED);
@@ -176,10 +172,53 @@ RecLocalInitMessage()
 // RecLocalStart
 //-------------------------------------------------------------------------
 int
-RecLocalStart()
+RecLocalStart(FileManager * configFiles)
 {
-  ink_thread_create(sync_thr, NULL);
+  ink_thread_create(sync_thr, configFiles);
   ink_thread_create(config_update_thr, NULL);
 
   return REC_ERR_OKAY;
 }
+
+int
+RecRegisterManagerCb(int id, RecManagerCb _fn, void *_data)
+{
+  return lmgmt->registerMgmtCallback(id, _fn, _data);
+}
+
+void
+RecSignalManager(int id, const char *, size_t)
+{
+   // Signals are messages sent across the management pipe, so by definition,
+   // you can't send a signal if you are a local process manager.
+   RecDebug(DL_Debug, "local manager dropping signal %d", id);
+}
+
+void
+RecMessageRegister()
+{
+  lmgmt->registerMgmtCallback(MGMT_SIGNAL_LIBRECORDS, RecMessageRecvThis, NULL);
+}
+
+//-------------------------------------------------------------------------
+// RecMessageSend
+//-------------------------------------------------------------------------
+
+int
+RecMessageSend(RecMessage * msg)
+{
+  int msg_size;
+
+  if (!g_message_initialized)
+    return REC_ERR_OKAY;
+
+  // Make a copy of the record, but truncate it to the size actually used
+  if (g_mode_type == RECM_CLIENT || g_mode_type == RECM_SERVER) {
+    msg->o_end = msg->o_write;
+    msg_size = sizeof(RecMessageHdr) + (msg->o_write - msg->o_start);
+    lmgmt->signalEvent(MGMT_EVENT_LIBRECORDS, (char *) msg, msg_size);
+  }
+
+  return REC_ERR_OKAY;
+}
+

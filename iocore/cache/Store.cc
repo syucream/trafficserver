@@ -301,6 +301,7 @@ Store::read_config(int fd)
 {
   int n_dsstore = 0;
   int ln = 0;
+  int i = 0;
   const char *err = NULL;
   Span *sd = NULL, *cur = NULL;
   Span *ns;
@@ -308,10 +309,10 @@ Store::read_config(int fd)
   // Get pathname if not checking file
 
   if (fd < 0) {
-    xptr<char> storage_path(RecConfigReadConfigPath("proxy.config.cache.storage_filename", "storage.config"));
+    ats_scoped_str storage_path(RecConfigReadConfigPath("proxy.config.cache.storage_filename", "storage.config"));
 
     Debug("cache_init", "Store::read_config, fd = -1, \"%s\"", (const char *)storage_path);
-    fd =::open(storage_path, O_RDONLY);
+    fd = ::open(storage_path, O_RDONLY);
     if (fd < 0) {
       err = "error on open";
       goto Lfail;
@@ -360,10 +361,8 @@ Store::read_config(int fd)
     Debug("cache_init", "Store::read_config - ns = new Span; ns->init(\"%s\",%" PRId64 "), ns->vol_num=%d",
       pp, size, ns->vol_num);
     if ((err = ns->init(pp, size))) {
-      char buf[4096];
-      snprintf(buf, sizeof(buf), "could not initialize storage \"%s\" [%s]", pp, err);
-      REC_SignalWarning(REC_SIGNAL_SYSTEM_ERROR, buf);
-      Debug("cache_init", "Store::read_config - %s", buf);
+      RecSignalWarning(REC_SIGNAL_SYSTEM_ERROR, "could not initialize storage \"%s\" [%s]", pp, err);
+      Debug("cache_init", "Store::read_config - could not initialize storage \"%s\" [%s]", pp, err);
       delete ns;
       ats_free(pp);
       continue;
@@ -382,25 +381,26 @@ Store::read_config(int fd)
     }
   }
 
-  ::close(fd);
   // count the number of disks
-
-  {
-    extend(n_dsstore);
-    cur = sd;
-    Span *next = cur;
-    int i = 0;
-    while (cur) {
-      next = cur->link.next;
-      cur->link.next = NULL;
-      disk[i++] = cur;
-      cur = next;
-    }
-    sort();
+  extend(n_dsstore);
+  cur = sd;
+  while (cur) {
+    Span* next = cur->link.next;
+    cur->link.next = NULL;
+    disk[i++] = cur;
+    cur = next;
   }
-
-Lfail:;
+  sd = 0; // these are all used.
+  sort();
+  ::close(fd);
   return NULL;
+
+Lfail:
+  // Do clean up.
+  ::close(fd);
+  if (sd)
+    delete sd;
+
   return err;
 }
 
@@ -423,11 +423,8 @@ Store::read_interim_config() {
     n[len] = '\0';
     ns = new Span;
     if ((err = ns->init(n, -1))) {
-      char buf[4096];
-      snprintf(buf, sizeof(buf), "could not initialize storage \"%s\" [%s]", n,
-          err);
-      REC_SignalWarning(REC_SIGNAL_SYSTEM_ERROR, buf);
-      Debug("cache_init", "Store::read_interim_config - %s", buf);
+      RecSignalWarning(REC_SIGNAL_SYSTEM_ERROR, "could not initialize storage \"%s\" [%s]", n, err);
+      Debug("cache_init", "Store::read_interim_config - could not initialize storage \"%s\" [%s]", n, err);
       delete ns;
       continue;
     }
@@ -508,7 +505,7 @@ Span::init(char *an, int64_t size)
     return "error stat of file";
   }
 
-  xfd fd(socketManager.open(n, O_RDONLY));
+  ats_scoped_fd fd(socketManager.open(n, O_RDONLY));
   if (!fd) {
     Warning("unable to open '%s': %s", n, strerror(errno));
     return "unable to open";
@@ -599,7 +596,7 @@ Span::init(char *filename, int64_t size)
   //
   is_mmapable_internal = true;
 
-  xfd fd(socketManager.open(filename, O_RDONLY));
+  ats_scoped_fd fd(socketManager.open(filename, O_RDONLY));
   if (!fd) {
     Warning("unable to open '%s': %s", filename, strerror(errno));
     return "unable to open";
@@ -684,7 +681,7 @@ Span::init(char *filename, int64_t size)
   int devnum = 0, arg = 0;
   int ret = 0, is_disk = 0;
   u_int64_t heads, sectors, cylinders, adjusted_sec;
-  xfd fd;
+  ats_scoped_fd fd;
 
   /* Fetch file type */
   struct stat stat_buf;
@@ -806,7 +803,6 @@ Span::init(char *filename, int64_t size)
       if (minor(devnum) == 0)
         return "The raw device control file (usually /dev/raw; major 162, minor 0) is not a valid cache location.\n";
 
-      is_disk = 1;
       is_mmapable_internal = false;     /* I -think- */
       file_pathname = 1;
       pathname = ats_strdup(filename);
@@ -909,7 +905,7 @@ Store::spread_alloc(Store & s, unsigned int blocks, bool mmapable)
 
   int disks_left = spread_over;
 
-  for (unsigned i = 0; blocks && i < n_disks; i++) {
+  for (unsigned i = 0; blocks && disks_left && i < n_disks; i++) {
     if (!(mmapable && !disk[i]->is_mmapable())) {
       unsigned int target = blocks / disks_left;
       if (blocks - target > total_blocks(i + 1))

@@ -248,8 +248,8 @@ init_system()
 static void
 check_lockfile()
 {
-  xptr<char> rundir(RecConfigReadRuntimeDir());
-  xptr<char> lockfile;
+  ats_scoped_str rundir(RecConfigReadRuntimeDir());
+  ats_scoped_str lockfile;
   pid_t holding_pid;
   int err;
 
@@ -278,7 +278,7 @@ check_lockfile()
 static void
 check_config_directories(void)
 {
-  xptr<char> rundir(RecConfigReadRuntimeDir());
+  ats_scoped_str rundir(RecConfigReadRuntimeDir());
 
   if (access(Layout::get()->sysconfdir, R_OK) == -1) {
     fprintf(stderr,"unable to access() config dir '%s': %d, %s\n",
@@ -478,7 +478,6 @@ cmd_check_internal(char * /* cmd ATS_UNUSED */, bool fix = false)
   const char *n = fix ? "REPAIR" : "CHECK";
 
   printf("%s\n\n", n);
-  int res = 0;
 
   hostdb_current_interval = (ink_get_based_hrtime() / HRTIME_MINUTE);
 
@@ -498,7 +497,7 @@ cmd_check_internal(char * /* cmd ATS_UNUSED */, bool fix = false)
     printf("\tunable to open Host Database, %s failed\n", n);
     return CMD_OK;
   }
-  res = hd.check("hostdb.config", fix) < 0 || res;
+  hd.check("hostdb.config", fix);
   hd.reset();
 
   if (cacheProcessor.start() < 0) {
@@ -535,8 +534,8 @@ cmd_clear(char *cmd)
   bool c_cache = !strcmp(cmd, "clear_cache");
 
   if (c_all || c_hdb) {
-    xptr<char> rundir(RecConfigReadRuntimeDir());
-    xptr<char> config(Layout::relative_to(rundir, "hostdb.config"));
+    ats_scoped_str rundir(RecConfigReadRuntimeDir());
+    ats_scoped_str config(Layout::relative_to(rundir, "hostdb.config"));
 
     Note("Clearing HostDB Configuration");
     if (unlink(config) < 0)
@@ -1158,12 +1157,12 @@ adjust_num_of_net_threads(int nthreads)
     REC_ReadConfigFloat(autoconfig_scale, "proxy.config.exec_thread.autoconfig.scale");
     num_of_threads_tmp = (int) ((float) num_of_threads_tmp * autoconfig_scale);
 
-    if (num_of_threads_tmp) {
-      nthreads = num_of_threads_tmp;
-    }
-
     if (unlikely(num_of_threads_tmp > MAX_EVENT_THREADS)) {
       num_of_threads_tmp = MAX_EVENT_THREADS;
+    }
+
+    if (num_of_threads_tmp) {
+      nthreads = num_of_threads_tmp;
     }
   }
 
@@ -1340,7 +1339,7 @@ main(int /* argc ATS_UNUSED */, char **argv)
   if (!num_task_threads)
     REC_ReadConfigInteger(num_task_threads, "proxy.config.task_threads");
 
-  xptr<char> user(MAX_LOGIN + 1);
+  ats_scoped_str user(MAX_LOGIN + 1);
 
   *user = '\0';
   admin_user_p = ((REC_ERR_OKAY == REC_ReadConfigString(user, "proxy.config.admin.user_id", MAX_LOGIN)) &&

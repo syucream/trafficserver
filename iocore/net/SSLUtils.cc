@@ -24,6 +24,7 @@
 #include "I_Layout.h"
 #include "P_Net.h"
 #include "ink_cap.h"
+#include "P_OCSPStapling.h"
 
 #include <string>
 #include <openssl/err.h>
@@ -87,13 +88,13 @@ struct ssl_user_config
   }
 
   int session_ticket_enabled;  // ssl_ticket_enabled - session ticket enabled
-  xptr<char> addr;   // dest_ip - IPv[64] address to match
-  xptr<char> cert;   // ssl_cert_name - certificate
-  xptr<char> first_cert; // the first certificate name when multiple cert files are in 'ssl_cert_name'
-  xptr<char> ca;     // ssl_ca_name - CA public certificate
-  xptr<char> key;    // ssl_key_name - Private key
-  xptr<char> ticket_key_filename; // ticket_key_name - session key file. [key_name (16Byte) + HMAC_secret (16Byte) + AES_key (16Byte)]
-  xptr<char> dialog; // ssl_key_dialog - Private key dialog
+  ats_scoped_str addr;   // dest_ip - IPv[64] address to match
+  ats_scoped_str cert;   // ssl_cert_name - certificate
+  ats_scoped_str first_cert; // the first certificate name when multiple cert files are in 'ssl_cert_name'
+  ats_scoped_str ca;     // ssl_ca_name - CA public certificate
+  ats_scoped_str key;    // ssl_key_name - Private key
+  ats_scoped_str ticket_key_filename; // ticket_key_name - session key file. [key_name (16Byte) + HMAC_secret (16Byte) + AES_key (16Byte)]
+  ats_scoped_str dialog; // ssl_key_dialog - Private key dialog
 };
 
 // Check if the ticket_key callback #define is available, and if so, enable session tickets.
@@ -286,7 +287,7 @@ static SSL_CTX *
 ssl_context_enable_tickets(SSL_CTX * ctx, const char * ticket_key_path)
 {
 #if HAVE_OPENSSL_SESSION_TICKETS
-  xptr<char>          ticket_key_data;
+  ats_scoped_str          ticket_key_data;
   int                 ticket_key_len;
   ssl_ticket_key_t *  ticket_key = NULL;
 
@@ -550,6 +551,10 @@ SSLInitializeLibrary()
   }
   ssl_session_ticket_index = (iRet == -1 ? 0 : iRet);
 
+#ifdef HAVE_OPENSSL_OCSP_STAPLING
+  ssl_stapling_ex_init();
+#endif /* HAVE_OPENSSL_OCSP_STAPLING */
+
   open_ssl_initialized = true;
 }
 
@@ -642,6 +647,21 @@ SSLInitializeStatistics()
                      RecRawStatSyncSum);
   RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.total_success_handshake_count",
                      RECD_INT, RECP_PERSISTENT, (int) ssl_total_success_handshake_count_stat,
+                     RecRawStatSyncCount);
+
+  // TLS tickets
+  RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.total_tickets_created",
+                     RECD_INT, RECP_PERSISTENT, (int) ssl_total_tickets_created_stat,
+                     RecRawStatSyncCount);
+  RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.total_tickets_verified",
+                     RECD_INT, RECP_PERSISTENT, (int) ssl_total_tickets_verified_stat,
+                     RecRawStatSyncCount);
+  RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.total_tickets_not_found",
+                     RECD_INT, RECP_PERSISTENT, (int) ssl_total_tickets_not_found_stat,
+                     RecRawStatSyncCount);
+  // TODO: ticket renewal is not used right now.
+  RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.total_tickets_renewed",
+                     RECD_INT, RECP_PERSISTENT, (int) ssl_total_tickets_renewed_stat,
                      RecRawStatSyncCount);
 
   // Get and register the SSL cipher stats. Note that we are using the default SSL context to obtain
@@ -882,7 +902,7 @@ static bool
 SSLPrivateKeyHandler(
     SSL_CTX * ctx,
     const SSLConfigParams * params,
-    const xptr<char>& completeServerCertPath,
+    const ats_scoped_str& completeServerCertPath,
     const char * keyPath)
 {
   if (!keyPath) {
@@ -892,7 +912,7 @@ SSLPrivateKeyHandler(
       return false;
     }
   } else if (params->serverKeyPathOnly != NULL) {
-    xptr<char> completeServerKeyPath(Layout::get()->relative_to(params->serverKeyPathOnly, keyPath));
+    ats_scoped_str completeServerKeyPath(Layout::get()->relative_to(params->serverKeyPathOnly, keyPath));
     if (!SSL_CTX_use_PrivateKey_file(ctx, completeServerKeyPath, SSL_FILETYPE_PEM)) {
       SSLError("failed to load server private key from %s", (const char *) completeServerKeyPath);
       return false;
@@ -916,7 +936,7 @@ SSLInitServerContext(
 {
   int         session_id_context;
   int         server_verify_client;
-  xptr<char>  completeServerCertPath;
+  ats_scoped_str  completeServerCertPath;
   SSL_CTX *   ctx = SSLDefaultServerContext();
 
   // disable selected protocols
@@ -1001,7 +1021,7 @@ SSLInitServerContext(
 
     // First, load any CA chains from the global chain file.
     if (params->serverCertChainFilename) {
-      xptr<char> completeServerCertChainPath(Layout::relative_to(params->serverCertPathOnly, params->serverCertChainFilename));
+      ats_scoped_str completeServerCertChainPath(Layout::relative_to(params->serverCertPathOnly, params->serverCertChainFilename));
       if (!SSL_CTX_add_extra_chain_cert_file(ctx, completeServerCertChainPath)) {
         SSLError("failed to load global certificate chain from %s", (const char *) completeServerCertChainPath);
         goto fail;
@@ -1010,7 +1030,7 @@ SSLInitServerContext(
 
     // Now, load any additional certificate chains specified in this entry.
     if (sslMultCertSettings.ca) {
-      xptr<char> completeServerCertChainPath(Layout::relative_to(params->serverCertPathOnly, sslMultCertSettings.ca));
+      ats_scoped_str completeServerCertChainPath(Layout::relative_to(params->serverCertPathOnly, sslMultCertSettings.ca));
       if (!SSL_CTX_add_extra_chain_cert_file(ctx, completeServerCertChainPath)) {
         SSLError("failed to load certificate chain from %s", (const char *) completeServerCertChainPath);
         goto fail;
@@ -1092,6 +1112,16 @@ SSLInitClientContext(const SSLConfigParams * params)
   if (!client_ctx) {
     SSLError("cannot create new client context");
     return NULL;
+  }
+
+  if (params->ssl_client_ctx_protocols) {
+    SSL_CTX_set_options(client_ctx, params->ssl_client_ctx_protocols);
+  }
+  if (params->client_cipherSuite != NULL) {
+    if (!SSL_CTX_set_cipher_list(client_ctx, params->client_cipherSuite)) {
+      SSLError("invalid client cipher suite in records.config");
+      goto fail;
+    }
   }
 
   // if no path is given for the client private key,
@@ -1190,7 +1220,7 @@ ssl_index_certificate(SSLCertLookup * lookup, SSL_CTX * ctx, const char * certfi
 
       X509_NAME_ENTRY * e = X509_NAME_get_entry(subject, pos);
       ASN1_STRING * cn = X509_NAME_ENTRY_get_data(e);
-      xptr<char> name(asn1_strdup(cn));
+      ats_scoped_str name(asn1_strdup(cn));
 
       Debug("ssl", "mapping '%s' to certificate %s", (const char *) name, certfile);
       lookup->insert(ctx, name);
@@ -1207,7 +1237,7 @@ ssl_index_certificate(SSLCertLookup * lookup, SSL_CTX * ctx, const char * certfi
 
       name = sk_GENERAL_NAME_value(names, i);
       if (name->type == GEN_DNS) {
-        xptr<char> dns(asn1_strdup(name->d.dNSName));
+        ats_scoped_str dns(asn1_strdup(name->d.dNSName));
         Debug("ssl", "mapping '%s' to certificate %s", (const char *) dns, certfile);
         lookup->insert(ctx, dns);
       }
@@ -1258,8 +1288,8 @@ ssl_store_ssl_context(
     const ssl_user_config & sslMultCertSettings)
 {
   SSL_CTX *   ctx;
-  xptr<char>  certpath;
-  xptr<char>  session_key_path;
+  ats_scoped_str  certpath;
+  ats_scoped_str  session_key_path;
 
   ctx = ssl_context_enable_sni(SSLInitServerContext(params, sslMultCertSettings), lookup);
   if (!ctx) {
@@ -1305,9 +1335,25 @@ ssl_store_ssl_context(
 
   // Load the session ticket key if session tickets are not disabled and we have key name.
   if (sslMultCertSettings.session_ticket_enabled != 0 && sslMultCertSettings.ticket_key_filename) {
-    xptr<char> ticket_key_path(Layout::relative_to(params->serverCertPathOnly, sslMultCertSettings.ticket_key_filename));
+    ats_scoped_str ticket_key_path(Layout::relative_to(params->serverCertPathOnly, sslMultCertSettings.ticket_key_filename));
     ssl_context_enable_tickets(ctx, ticket_key_path);
   }
+
+#ifdef HAVE_OPENSSL_OCSP_STAPLING
+  if (SSLConfigParams::ssl_ocsp_enabled) {
+    Debug("ssl", "ssl ocsp stapling is enabled");
+    SSL_CTX_set_tlsext_status_cb(ctx, ssl_callback_ocsp_stapling);
+    if (!ssl_stapling_init_cert(ctx, (const char *)certpath)) {
+      Error("fail to configure SSL_CTX for OCSP Stapling info");
+    }
+  } else {
+    Debug("ssl", "ssl ocsp stapling is disabled");
+  }
+#else
+  if (SSLConfigParams::ssl_ocsp_enabled) {
+    Error("fail to enable ssl ocsp stapling, this openssl version does not support it");
+  }
+#endif /* HAVE_OPENSSL_OCSP_STAPLING */
 
   // Insert additional mappings. Note that this maps multiple keys to the same value, so when
   // this code is updated to reconfigure the SSL certificates, it will need some sort of
@@ -1388,12 +1434,9 @@ SSLParseCertificateConfiguration(
 {
   char *      tok_state = NULL;
   char *      line = NULL;
-  xptr<char>  file_buf;
+  ats_scoped_str  file_buf;
   unsigned    line_num = 0;
   matcher_line line_info;
-
-  bool alarmAlready = false;
-  char errBuf[1024];
 
   const matcher_tags sslCertTags = {
     NULL, NULL, NULL, NULL, NULL, NULL, false
@@ -1432,9 +1475,8 @@ SSLParseCertificateConfiguration(
       errPtr = parseConfigLine(line, &line_info, &sslCertTags);
 
       if (errPtr != NULL) {
-        snprintf(errBuf, sizeof(errBuf), "%s: discarding %s entry at line %d: %s",
+        RecSignalWarning(REC_SIGNAL_CONFIG_ERROR, "%s: discarding %s entry at line %d: %s",
                      __func__, params->configFilePath, line_num, errPtr);
-        REC_SignalError(errBuf, alarmAlready);
       } else {
         if (ssl_extract_certificate(&line_info, sslMultiCertSettings)) {
           if (!ssl_store_ssl_context(params, lookup, sslMultiCertSettings)) {
@@ -1442,9 +1484,8 @@ SSLParseCertificateConfiguration(
                 params->configFilePath, line_num);
           }
         } else {
-          snprintf(errBuf, sizeof(errBuf), "%s: discarding invalid %s entry at line %u",
+          RecSignalWarning(REC_SIGNAL_CONFIG_ERROR, "%s: discarding invalid %s entry at line %u",
                        __func__, params->configFilePath, line_num);
-          REC_SignalError(errBuf, alarmAlready);
         }
       }
 
@@ -1492,12 +1533,14 @@ ssl_callback_session_ticket(
     RAND_pseudo_bytes(iv, EVP_MAX_IV_LENGTH);
     EVP_EncryptInit_ex(cipher_ctx, EVP_aes_128_cbc(), NULL, ssl_ticket_key->aes_key, iv);
     HMAC_Init_ex(hctx, ssl_ticket_key->hmac_secret, 16, evp_md_func, NULL);
-    Debug("ssl", "create ticket for a new session");
 
+    Debug("ssl", "create ticket for a new session.");
+    SSL_INCREMENT_DYN_STAT(ssl_total_tickets_created_stat);
     return 0;
   } else if (enc == 0) {
     if (memcmp(keyname, ssl_ticket_key->key_name, 16)) {
-      Error("keyname is not consistent.");
+      Debug("ssl", "keyname is not consistent.");
+      SSL_INCREMENT_DYN_STAT(ssl_total_tickets_not_found_stat);
       return 0;
     }
 
@@ -1505,6 +1548,7 @@ ssl_callback_session_ticket(
     HMAC_Init_ex(hctx, ssl_ticket_key->hmac_secret, 16, evp_md_func, NULL);
 
     Debug("ssl", "verify the ticket for an existing session.");
+    SSL_INCREMENT_DYN_STAT(ssl_total_tickets_verified_stat);
     return 1;
   }
 

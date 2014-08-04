@@ -2350,8 +2350,7 @@ HttpSM::state_cache_open_write(int event, void *data)
     // The write vector was locked and the cache_sm retried
     // and got the read vector again.
     cache_sm.cache_read_vc->get_http_info(&t_state.cache_info.object_read);
-    t_state.cache_info.is_ram_cache_hit =
-      t_state.http_config_param->record_tcp_mem_hit && (cache_sm.cache_read_vc)->is_ram_cache_hit();
+    t_state.cache_info.is_ram_cache_hit = (cache_sm.cache_read_vc)->is_ram_cache_hit();
 
     ink_assert(t_state.cache_info.object_read != 0);
     t_state.source = HttpTransact::SOURCE_CACHE;
@@ -2435,8 +2434,7 @@ HttpSM::state_cache_open_read(int event, void *data)
       t_state.source = HttpTransact::SOURCE_CACHE;
 
       cache_sm.cache_read_vc->get_http_info(&t_state.cache_info.object_read);
-      t_state.cache_info.is_ram_cache_hit =
-        t_state.http_config_param->record_tcp_mem_hit && (cache_sm.cache_read_vc)->is_ram_cache_hit();
+      t_state.cache_info.is_ram_cache_hit = (cache_sm.cache_read_vc)->is_ram_cache_hit();
 
       ink_assert(t_state.cache_info.object_read != 0);
       call_transact_and_set_next_state(HttpTransact::HandleCacheOpenRead);
@@ -3287,7 +3285,8 @@ HttpSM::tunnel_handler_post_ua(int event, HttpTunnelProducer * p)
     // We have completed reading POST data from client here.
     // It's time to free MIOBuffer of 100 Continue's response now,
     // althought this is a little late.
-    if (t_state.http_config_param->send_100_continue_response) {
+    if (t_state.http_config_param->send_100_continue_response &&
+       ua_entry->write_buffer) {
       free_MIOBuffer(ua_entry->write_buffer);
       ua_entry->write_buffer = NULL;
     }
@@ -3794,7 +3793,10 @@ HttpSM::do_remap_request(bool run_inline)
   DebugSM("http_seq", "[HttpSM::do_remap_request] Remapping request");
   DebugSM("url_rewrite", "Starting a possible remapping for request [%" PRId64 "]", sm_id);
 
-  bool ret = remapProcessor.setup_for_remap(&t_state);
+  bool ret = false;
+  if (t_state.cop_test_page == false) {
+    ret = remapProcessor.setup_for_remap(&t_state);
+  }
 
   // Preserve pristine url before remap
   // This needs to be done after the Host: header for reverse proxy is added to the url, but
@@ -4525,11 +4527,10 @@ HttpSM::do_http_server_open(bool raw)
 
     if (existing_ss) {
       // [amc] Not sure if this is the best option, but we don't get here unless session sharing is disabled
-      // so there's point in further checking on the match or pool values. But why check anything? The
+      // so there's no point in further checking on the match or pool values. But why check anything? The
       // client has already exchanged a request with this specific origin server and has sent another one
       // shouldn't we just automatically keep the association?
-      if (ats_ip_addr_eq(&existing_ss->server_ip.sa, &t_state.current.server->addr.sa) &&
-          ats_ip_port_cast(&existing_ss->server_ip) == ats_ip_port_cast(&t_state.current.server->addr)) {
+      if (ats_ip_addr_port_eq(&existing_ss->server_ip.sa, &t_state.current.server->addr.sa)) {
         ua_session->attach_server_session(NULL);
         existing_ss->state = HSS_ACTIVE;
         this->attach_server_session(existing_ss);
@@ -4640,6 +4641,9 @@ HttpSM::do_http_server_open(bool raw)
 
   if (scheme_to_use == URL_WKSIDX_HTTPS) {
     DebugSM("http", "calling sslNetProcessor.connect_re");
+    int len = 0;
+    const char * host = t_state.hdr_info.server_request.host_get(&len);
+    opt.set_sni_servername(host, len);
     connect_action_handle = sslNetProcessor.connect_re(this,    // state machine
                                                        &t_state.current.server->addr.sa,    // addr + port
                                                        &opt);
@@ -4909,7 +4913,8 @@ HttpSM::release_server_session(bool serve_from_cache)
     return;
   }
 
-  if (t_state.current.server->keep_alive == HTTP_KEEPALIVE &&
+  if (TS_SERVER_SESSION_SHARING_MATCH_NONE != t_state.txn_conf->server_session_sharing_match &&
+      t_state.current.server->keep_alive == HTTP_KEEPALIVE &&
       t_state.hdr_info.server_response.valid() &&
       (t_state.hdr_info.server_response.status_get() == HTTP_STATUS_NOT_MODIFIED ||
        (t_state.hdr_info.server_request.method_get_wksidx() == HTTP_WKSIDX_HEAD
@@ -5956,6 +5961,8 @@ HttpSM::server_transfer_init(MIOBuffer * buf, int hdr_size)
 {
   int64_t nbytes;
   int64_t to_copy = INT64_MAX;
+
+  ink_assert(t_state.current.server != NULL); // should have been set up if we're doing a transfer.
 
   if (server_entry->eos == true) {
     // The server has shutdown on us already so the only data

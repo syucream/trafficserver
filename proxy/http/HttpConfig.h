@@ -738,11 +738,6 @@ public:
   ///////////////////
   MgmtByte record_cop_page;
 
-  ////////////////////////
-  // record tcp_mem_hit //
-  ////////////////////////
-  MgmtByte record_tcp_mem_hit;
-
   /////////////////////
   // Error Reporting //
   /////////////////////
@@ -782,6 +777,13 @@ public:
   MgmtByte send_100_continue_response;
 
   OverridableHttpConfigParams oride;
+
+  ////////////////////
+  // Local Manager  //
+  ////////////////////
+  MgmtInt autoconf_port;
+  MgmtByte autoconf_localhost_only;
+
 
 private:
   /////////////////////////////////////
@@ -916,7 +918,6 @@ HttpConfigParams::HttpConfigParams()
     reverse_proxy_enabled(0),
     url_remap_required(1),
     record_cop_page(0),
-    record_tcp_mem_hit(0),
     errors_log_error_pages(1),
     enable_http_info(0),
     cluster_time_delta(0),
@@ -928,7 +929,9 @@ HttpConfigParams::HttpConfigParams()
     ignore_accept_language_mismatch(0),
     ignore_accept_encoding_mismatch(0),
     ignore_accept_charset_mismatch(0),
-    send_100_continue_response(0)
+    send_100_continue_response(0),
+    autoconf_port(0),
+    autoconf_localhost_only(0)
 {
 }
 

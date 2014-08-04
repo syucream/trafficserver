@@ -46,7 +46,6 @@
 #include "StatPages.h"
 #include "HttpClientSession.h"
 #include "I_Machine.h"
-#include "IPAllow.h"
 
 static char range_type[] = "multipart/byteranges; boundary=RANGE_SEPARATOR";
 #define RANGE_NUMBERS_LENGTH 60
@@ -64,7 +63,7 @@ static char range_type[] = "multipart/byteranges; boundary=RANGE_SEPARATOR";
     sm->history_pos += 1; \
 }
 
-#define DebugTxn(tag, ...) DebugSpecific((s->state_machine && s->state_machine->debug_on), tag, __VA_ARGS__)
+#define DebugTxn(tag, ...) DebugSpecific((s->state_machine->debug_on), tag, __VA_ARGS__)
 
 extern HttpBodyFactory *body_factory;
 extern int cache_config_vary_on_user_agent;
@@ -781,11 +780,16 @@ HttpTransact::StartRemapRequest(State* s)
   int host_len, path_len;
   const char *host = url->host_get(&host_len);
   const char *path = url->path_get(&path_len);
+  const int port = url->port_get();
 
   const char syntxt[] = "synthetic.txt";
 
   s->cop_test_page = (ptr_len_cmp(host, host_len, local_host_ip_str, sizeof(local_host_ip_str) - 1) == 0) &&
-    (ptr_len_cmp(path, path_len, syntxt, sizeof(syntxt) - 1) == 0);
+    (ptr_len_cmp(path, path_len, syntxt, sizeof(syntxt) - 1) == 0) &&
+    port == s->http_config_param->autoconf_port &&
+    s->method == HTTP_WKSIDX_GET &&
+    s->orig_scheme == URL_WKSIDX_HTTP &&
+    (!s->http_config_param->autoconf_localhost_only || ats_ip4_addr_cast(&s->client_info.addr.sa) == htonl(INADDR_LOOPBACK));
 
   //////////////////////////////////////////////////////////////////
   // FIX: this logic seems awfully convoluted and hard to follow; //
@@ -1107,28 +1111,40 @@ HttpTransact::handle_websocket_connection(State *s) {
 }
 
 
+static bool mimefield_value_equal(MIMEField *field, const char *value, const int value_len)
+{
+  if (field != NULL) {
+    int field_value_len = 0;
+    const char *field_value = field->value_get(&field_value_len);
+    if (field_value != NULL) {
+      if (field_value_len == value_len) {
+        return !strncasecmp(field_value, value, value_len);
+      }
+    }
+  }
+  return false;
+}
+
 void
 HttpTransact::ModifyRequest(State* s)
 {
   int scheme, hostname_len;
   const char *hostname;
-  MIMEField *max_forwards_f;
-  int max_forwards = -1;
-  HTTPHdr* request = &s->hdr_info.client_request;
+  HTTPHdr& request = s->hdr_info.client_request;
 
   DebugTxn("http_trans", "START HttpTransact::ModifyRequest");
 
-  // Intialize the state vars necessary to sending error responses
-  bootstrap_state_variables_from_request(s, request);
+  // Initialize the state vars necessary to sending error responses
+  bootstrap_state_variables_from_request(s, &request);
 
   ////////////////////////////////////////////////
   // If there is no scheme default to http      //
   ////////////////////////////////////////////////
-  URL *url = request->url_get();
+  URL *url = request.url_get();
 
   s->orig_scheme = (scheme = url->scheme_get_wksidx());
 
-  s->method = s->hdr_info.client_request.method_get_wksidx();
+  s->method = request.method_get_wksidx();
   if (scheme < 0 && s->method != HTTP_WKSIDX_CONNECT) {
     if (s->client_info.port_attribute == HttpProxyPort::TRANSPORT_SSL) {
       url->scheme_set(URL_SCHEME_HTTPS, URL_LEN_HTTPS);
@@ -1139,7 +1155,7 @@ HttpTransact::ModifyRequest(State* s)
     }
   }
 
-  if (s->method == HTTP_WKSIDX_CONNECT && !request->is_port_in_header())
+  if (s->method == HTTP_WKSIDX_CONNECT && !request.is_port_in_header())
     url->port_set(80);
 
   // Ugly - this must come after the call to url->scheme_set or
@@ -1147,24 +1163,23 @@ HttpTransact::ModifyRequest(State* s)
   // The solution should be to move the scheme detecting logic in to
   // the header class, rather than doing it in a random bit of
   // external code.
-  hostname = request->host_get(&hostname_len);
-  if (!request->is_target_in_url())
+  hostname = request.host_get(&hostname_len);
+  if (!request.is_target_in_url()) {
     s->hdr_info.client_req_is_server_style = true;
+  }
 
   // If the incoming request is proxy-style make sure the Host: header
   // matches the incoming request URL. The exception is if we have
-  // Max-Fowards set to 0 in the request (ToDo: why??)
-  max_forwards_f = s->hdr_info.client_request.field_find(MIME_FIELD_MAX_FORWARDS, MIME_LEN_MAX_FORWARDS);
-  if (max_forwards_f) {
-    max_forwards = max_forwards_f->value_get_int();
+  // Max-Forwards set to 0 in the request
+  int max_forwards = -1;  // -1 is a valid value meaning that it didn't find the header
+  if (request.presence(MIME_PRESENCE_MAX_FORWARDS)) {
+    max_forwards = request.get_max_forwards();
   }
 
   if ((max_forwards != 0) && !s->hdr_info.client_req_is_server_style && s->method != HTTP_WKSIDX_CONNECT) {
-    MIMEField *host_field = s->hdr_info.client_request.field_find(MIME_FIELD_HOST, MIME_LEN_HOST);
+    MIMEField *host_field = request.field_find(MIME_FIELD_HOST, MIME_LEN_HOST);
     int host_val_len = hostname_len;
     const char **host_val = &hostname;
-    int req_host_val_len;
-    const char *req_host_val;
     int port = url->port_get_raw();
     char *buf = NULL;
 
@@ -1176,17 +1191,13 @@ HttpTransact::ModifyRequest(State* s)
       host_val = (const char**)(&buf);
     }
 
-    if (!host_field ||
-        ((req_host_val = host_field->value_get(&req_host_val_len)) == NULL) ||
-        (host_val_len != req_host_val_len) ||
-        (strncasecmp(*host_val, req_host_val, host_val_len) != 0)) {
-
+    if (mimefield_value_equal(host_field, *host_val, host_val_len) == false) {
       if (!host_field) { // Assure we have a Host field, before setting it
-        host_field = s->hdr_info.client_request.field_create(MIME_FIELD_HOST, MIME_LEN_HOST);
-        s->hdr_info.client_request.field_attach(host_field);
+        host_field = request.field_create(MIME_FIELD_HOST, MIME_LEN_HOST);
+        request.field_attach(host_field);
       }
-      s->hdr_info.client_request.field_value_set(host_field, *host_val, host_val_len);
-      request->mark_target_dirty();
+      request.field_value_set(host_field, *host_val, host_val_len);
+      request.mark_target_dirty();
     }
   }
 
@@ -6444,7 +6455,7 @@ HttpTransact::process_quick_http_filter(State* s, int method)
     if (deny_request) {
       if (is_debug_tag_set("ip-allow")) {
         ip_text_buffer ipb;
-        Debug("ip-allow", "Quick filter denial on %s:%s with mask %x", ats_ip_ntop(&s->client_info.addr.sa, ipb, sizeof(ipb)), hdrtoken_index_to_wks(method), acl_record->_method_mask);
+        Debug("ip-allow", "Quick filter denial on %s:%s with mask %x", ats_ip_ntop(&s->client_info.addr.sa, ipb, sizeof(ipb)), hdrtoken_index_to_wks(method), acl_record ? acl_record->_method_mask : 0x0);
       }
       s->client_connection_enabled = false;
     }

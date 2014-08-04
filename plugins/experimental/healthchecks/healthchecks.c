@@ -193,7 +193,7 @@ hc_thread(void *data ATS_UNUSED)
   gettimeofday(&last_free, NULL);
 
   /* Setup watchers for the directories, these are a one time setup */
-  dirs = setup_watchers(fd);
+  setup_watchers(fd); // This is a leak, but since we enter an infinite loop this is ok?
 
   while (1) {
     HCFileData *fdata = fl_head, *fdata_prev = NULL;
@@ -319,11 +319,8 @@ parse_configs(const char* fname)
     int state = 0;
     char *ok=NULL, *miss=NULL, *mime=NULL;
 
-    /* Allocate a new config-info, if we don't have one already */
-    if (!finfo) {
-      finfo = TSmalloc(sizeof(HCFileInfo));
-      memset(finfo, 0, sizeof(HCFileInfo));
-    }
+    finfo = TSmalloc(sizeof(HCFileInfo));
+    memset(finfo, 0, sizeof(HCFileInfo));
 
     if (fgets(buf, sizeof(buf) - 1, fd)) {
       str = strtok_r(buf, SEPARATORS, &save);
@@ -374,7 +371,8 @@ parse_configs(const char* fname)
           prev_finfo->_next = finfo;
         }
         prev_finfo = finfo;
-        finfo = NULL; /* We used this one up, get a new one next iteration */
+      } else {
+        TSfree(finfo);
       }
     }
   }

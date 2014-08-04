@@ -1,6 +1,50 @@
                                                          -*- coding: utf-8 -*-
 Changes with Apache Traffic Server 5.1.0
 
+  *) [TS-2977] Move traffic_manager under the cmd subdirectory.
+
+  *) [TS-2971] Authproxy plugin has inconsistent debug symbol.
+
+  *) [TS-2976] Perform some librecords build cleanup.
+
+  *) [TS-2975] Add cache lookup status support to the xdebug plugin.
+
+  *) [TS-2974] Add a new metrics plugin to support the Epic monitoring system.
+
+  *) [TS-2973] Add milestones support to the xdebug plugin.
+
+  *) [TS-2957] Add new sslheaders plugin.
+
+  *) [TS-2802] Add SNI support for origin server connections.
+   Author: Wei Sun <sunwei@yahoo-inc.com>
+
+  *) [TS-2958] url_sig: remove printf's and make redirects use appropriate
+   status codes.
+
+  *) [TS-2939] Metalink: Fix crash when checking the digest of a file
+   that wasn't cacheable
+
+  *) [TS-2922] Support the new ppc64le platform. Author: Breno Leitao
+
+  *) [TS-2944] Remove the proxy.config.http.record_tcp_mem_hit configuration variable.
+
+  *) [TS-2924] Configurable client's ssl protocols and cipher suite
+
+  *) [TS-2915] SEGV occurs when POST request was posted without Expect: 100-continue header
+
+  *) [TS-2940] Fix varargs corruption when logging fatal errors.
+
+  *) [TS-2935] Clean up semaphore platform code.
+
+  *) [TS-2930] missing hostname in ts.client_request.get_url() for lua plugin.
+
+  *) [TS-2934] Default remap rule will remap synthetic test
+
+  *) [TS-2904] Add Via header decoder option to traffic_line.
+   Author: Meera Mosale Nataraja <mechins@gmail.com>
+
+  *) [TS-2932] Add an option to specify the build number at configure time.
+
   *) [TS-2931] Plugin metrics fail after a crash.
 
   *) [TS-2649] Use SSL certificate chain loading everywhere.
@@ -405,7 +449,7 @@ Changes with Apache Traffic Server 5.0.0
 
   *) [TS-2679] background_fetch plugin can use uninitialized cont pointer.
 
-  *) [TS-2675] metalink: Fix crash and plug memory leaks.
+  *) [TS-2675] Metalink: Fix crash and plug memory leaks.
    Author: Jack Bates <jack@nottheoilrig.com>
 
   *) [TS-2674] Remove debug printf() from traffic_top.
@@ -1447,7 +1491,7 @@ Changes with Apache Traffic Server 3.3.3 (never released)
 
   *) [TS-1925] Remove obsolete MMH hash API.
 
-  *) [TS-1924] Add metalink plugin documentation.
+  *) [TS-1924] Add Metalink plugin documentation.
     Author: Jack Bates <jack@nottheoilrig.com>
 
   *) [TS-1913] Fix memory issue caused by resolve_logfield_string()

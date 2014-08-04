@@ -1423,8 +1423,6 @@ HttpConfig::startup()
 
   HttpEstablishStaticConfigByte(c.record_cop_page, "proxy.config.http.record_heartbeat");
 
-  HttpEstablishStaticConfigByte(c.record_tcp_mem_hit, "proxy.config.http.record_tcp_mem_hit");
-
   HttpEstablishStaticConfigByte(c.oride.send_http11_requests, "proxy.config.http.send_http11_requests");
 
   // HTTP Referer Filtering
@@ -1462,6 +1460,10 @@ HttpConfig::startup()
   HttpEstablishStaticConfigByte(c.redirection_host_no_port, "proxy.config.http.redirect_host_no_port");
   HttpEstablishStaticConfigLongLong(c.number_of_redirections, "proxy.config.http.number_of_redirections");
   HttpEstablishStaticConfigLongLong(c.post_copy_size, "proxy.config.http.post_copy_size");
+
+  // Local Manager
+  HttpEstablishStaticConfigLongLong(c.autoconf_port, "proxy.config.admin.autoconf_port");
+  HttpEstablishStaticConfigByte(c.autoconf_localhost_only, "proxy.config.admin.autoconf.localhost_only");
 
   // Cluster time delta gets it own callback since it needs
   //  to use ink_atomic_swap
@@ -1668,7 +1670,6 @@ params->push_method_enabled = INT_TO_BOOL(m_master.push_method_enabled);
   params->errors_log_error_pages = INT_TO_BOOL(m_master.errors_log_error_pages);
   params->slow_log_threshold = m_master.slow_log_threshold;
   params->record_cop_page = INT_TO_BOOL(m_master.record_cop_page);
-  params->record_tcp_mem_hit = INT_TO_BOOL(m_master.record_tcp_mem_hit);
   params->oride.send_http11_requests = m_master.oride.send_http11_requests;
   params->oride.doc_in_cache_skip_dns = INT_TO_BOOL(m_master.oride.doc_in_cache_skip_dns);
   params->oride.default_buffer_size_index = m_master.oride.default_buffer_size_index;
@@ -1706,6 +1707,10 @@ params->push_method_enabled = INT_TO_BOOL(m_master.push_method_enabled);
   params->redirection_host_no_port = INT_TO_BOOL(m_master.redirection_host_no_port);
   params->number_of_redirections = m_master.number_of_redirections;
   params->post_copy_size = m_master.post_copy_size;
+
+  // Local Manager
+  params->autoconf_port = m_master.autoconf_port;
+  params->autoconf_localhost_only = m_master.autoconf_localhost_only;
 
   m_id = configProcessor.set(m_id, params);
 
