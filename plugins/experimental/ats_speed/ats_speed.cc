@@ -1,18 +1,26 @@
-// Copyright 2013 We-Amp B.V.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Author: oschaaf@we-amp.com (Otto van der Schaaf)
+/** @file
+
+    A brief file description
+
+    @section license License
+
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+*/
+
 // TODO(oschaaf): remove what isn't used
 #ifndef __STDC_LIMIT_MACROS
 #define __STDC_LIMIT_MACROS
@@ -716,40 +724,43 @@ handle_read_request_header(TSHttpTxn txnp) {
  
       ctx->url_string = new GoogleString(url, url_length);
       ctx->gurl = new GoogleUrl(*(ctx->url_string));
-      CHECK(ctx->gurl->IsWebValid()) << "Invalid URL!";
-      const char * method;
-      int method_len;
-      method = TSHttpHdrMethodGet(reqp, hdr_loc, &method_len);
-      bool head_or_get = method == TS_HTTP_METHOD_GET || method == TS_HTTP_METHOD_HEAD;
-      ctx->request_method = method;
-      GoogleString user_agent = get_header(reqp, hdr_loc, "User-Agent");
-      ctx->user_agent = new GoogleString(user_agent);
-      ctx->server_context = ats_process_context->server_context();
-      if (user_agent.find(kModPagespeedSubrequestUserAgent) != user_agent.npos) {
-        ctx->mps_user_agent = true;
-      }
-      if (ats_process_context->server_context()->IsPagespeedResource(gurl)) {
-        if (head_or_get && !ctx->mps_user_agent) { 
+      if (!ctx->gurl->IsWebValid()) {
+        TSDebug("ats-speed", "URL != WebValid(): %s", ctx->url_string->c_str());
+      } else {
+        const char * method;
+        int method_len;
+        method = TSHttpHdrMethodGet(reqp, hdr_loc, &method_len);
+        bool head_or_get = method == TS_HTTP_METHOD_GET || method == TS_HTTP_METHOD_HEAD;
+        ctx->request_method = method;
+        GoogleString user_agent = get_header(reqp, hdr_loc, "User-Agent");
+        ctx->user_agent = new GoogleString(user_agent);
+        ctx->server_context = ats_process_context->server_context();
+        if (user_agent.find(kModPagespeedSubrequestUserAgent) != user_agent.npos) {
+          ctx->mps_user_agent = true;
+        }
+        if (ats_process_context->server_context()->IsPagespeedResource(gurl)) {
+          if (head_or_get && !ctx->mps_user_agent) { 
+            ctx->resource_request = true;
+            TSHttpTxnArgSet(txnp, TXN_INDEX_OWNED_ARG, &TXN_INDEX_OWNED_ARG_UNSET);
+          }
+        } else if (ctx->gurl->PathSansQuery() == "/pagespeed_message"
+                   || ctx->gurl->PathSansQuery() == "/pagespeed_statistics"
+                   || ctx->gurl->PathSansQuery() == "/pagespeed_global_statistics"
+                   || ctx->gurl->PathSansQuery() == "/pagespeed_console"
+                   || ctx->gurl->PathSansLeaf() == "/ats_speed_static/"
+                   || ctx->gurl->PathSansQuery() == "/robots.txt"
+                   ) {
           ctx->resource_request = true;
           TSHttpTxnArgSet(txnp, TXN_INDEX_OWNED_ARG, &TXN_INDEX_OWNED_ARG_UNSET);
         }
-      } else if (ctx->gurl->PathSansQuery() == "/pagespeed_message"
-                 || ctx->gurl->PathSansQuery() == "/pagespeed_statistics"
-                 || ctx->gurl->PathSansQuery() == "/pagespeed_global_statistics"
-                 || ctx->gurl->PathSansQuery() == "/pagespeed_console"
-                 || ctx->gurl->PathSansLeaf() == "/ats_speed_static/"
-                 || ctx->gurl->PathSansQuery() == "/robots.txt"
-                 ) {
-          ctx->resource_request = true;
+        else if (StringCaseEqual(gurl.PathSansQuery() ,"/ats_speed_beacon")) {
+          ctx->beacon_request = true;
           TSHttpTxnArgSet(txnp, TXN_INDEX_OWNED_ARG, &TXN_INDEX_OWNED_ARG_UNSET);
-      }
-      else if (StringCaseEqual(gurl.PathSansQuery() ,"/ats_speed_beacon")) {
-        ctx->beacon_request = true;
-        TSHttpTxnArgSet(txnp, TXN_INDEX_OWNED_ARG, &TXN_INDEX_OWNED_ARG_UNSET);
-        hook_beacon_intercept(txnp);
+          hook_beacon_intercept(txnp);
+        }
       }
       TSfree((void*)url);
-    }
+    } // gurl->IsWebValid() == true
     TSHandleMLocRelease(reqp, TS_NULL_MLOC, hdr_loc);
   } else {
     DCHECK(false) << "Could not get client request header\n";
@@ -868,7 +879,8 @@ transform_plugin(TSCont contp, TSEvent event, void *edata)
       TSHandleMLocRelease(response_header_buf, TS_NULL_MLOC, response_header_loc);    
     }
   }
-  bool ok = !(ctx->resource_request || ctx->beacon_request || ctx->mps_user_agent);
+  bool ok = ctx->gurl->IsWebValid() &&
+            !(ctx->resource_request || ctx->beacon_request || ctx->mps_user_agent);
   if (!ok) {
     TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
     return 0;
