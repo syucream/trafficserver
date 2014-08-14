@@ -164,13 +164,6 @@ static volatile int delay_listen_for_cache_p = 0;
 
 AppVersionInfo appVersionInfo;  // Build info for this application
 
-const Version version = {
-  {CACHE_DB_MAJOR_VERSION, CACHE_DB_MINOR_VERSION},     // cacheDB
-  {CACHE_DIR_MAJOR_VERSION, CACHE_DIR_MINOR_VERSION},   // cacheDir
-  {CLUSTER_MAJOR_VERSION, CLUSTER_MINOR_VERSION},       // current clustering
-  {MIN_CLUSTER_MAJOR_VERSION, MIN_CLUSTER_MINOR_VERSION},       // min clustering
-};
-
 static const ArgumentDescription argument_descriptions[] = {
   {"net_threads", 'n', "Number of Net Threads", "I", &num_of_net_threads, "PROXY_NET_THREADS", NULL},
   {"cluster_threads", 'Z', "Number of Cluster Threads", "I", &num_of_cluster_threads, "PROXY_CLUSTER_THREADS", NULL},
@@ -396,6 +389,18 @@ CB_After_Cache_Init()
   int start;
 
   start = ink_atomic_swap(&delay_listen_for_cache_p, -1);
+
+  // Check for cache BC after the cache is initialized and before listen, if possible.
+  if (cacheProcessor.min_stripe_version.ink_major < CACHE_DB_MAJOR_VERSION) {
+    // Versions before 23 need the MMH hash.
+    if (cacheProcessor.min_stripe_version.ink_major < 23) {
+      Debug("cache_bc", "Pre 4.0 stripe (cache version %d.%d) found, forcing MMH hash for cache URLs"
+        , cacheProcessor.min_stripe_version.ink_major, cacheProcessor.min_stripe_version.ink_minor
+        );
+      URLHashContext::Setting = URLHashContext::MMH;
+    }
+  }
+
   if (1 == start) {
     Debug("http_listen", "Delayed listen enable, cache initialization finished");
     start_HttpProxyServer();

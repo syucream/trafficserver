@@ -363,16 +363,9 @@ RecordElement RecordsConfig[] = {
   //        # basics #
   //        ##########
   //       #
-  //       # The main server_port is listed here, other server ports is a
-  //       # string of ports, separated by whitespace.
-  //       #
   {RECT_CONFIG, "proxy.config.http.enabled", RECD_INT, "1", RECU_RESTART_TM, RR_NULL, RECC_INT, "[0-1]", RECA_NULL}
   ,
   {RECT_CONFIG, "proxy.config.http.server_ports", RECD_STRING, "8080", RECU_RESTART_TM, RR_NULL, RECC_NULL, NULL, RECA_NULL}
-  ,
-  {RECT_CONFIG, "proxy.config.http.server_port", RECD_INT, "-1", RECU_RESTART_TM, RR_NULL, RECC_INT, "[0-65535]", RECA_NULL}
-  ,
-  {RECT_CONFIG, "proxy.config.http.server_port_attr", RECD_STRING, "X", RECU_RESTART_TM, RR_NULL, RECC_NULL, NULL, RECA_NULL}
   ,
   {RECT_CONFIG, "proxy.config.http.wait_for_cache", RECD_INT, "0", RECU_RESTART_TM, RR_NULL, RECC_INT, "[0-1]", RECA_NULL}
   ,
@@ -625,6 +618,8 @@ RecordElement RecordsConfig[] = {
   {RECT_CONFIG, "proxy.config.http.cache.cache_urls_that_look_dynamic", RECD_INT, "1", RECU_DYNAMIC, RR_NULL, RECC_INT, "[0-1]", RECA_NULL}
   ,
   {RECT_CONFIG, "proxy.config.http.cache.enable_default_vary_headers", RECD_INT, "0", RECU_DYNAMIC, RR_NULL, RECC_INT, "[0-1]", RECA_NULL}
+  ,
+  {RECT_CONFIG, "proxy.config.http.cache.post_method", RECD_INT, "0", RECU_DYNAMIC, RR_NULL, RECC_INT, "[0-1]", RECA_NULL}
   ,
   {RECT_CONFIG, "proxy.config.http.cache.max_open_read_retries", RECD_INT, "-1", RECU_NULL, RR_NULL, RECC_NULL, NULL, RECA_NULL}
   ,
@@ -2035,6 +2030,14 @@ RecordElement RecordsConfig[] = {
   //#
   //############
   {RECT_CONFIG, "proxy.config.remap.num_remap_threads", RECD_INT, "0", RECU_NULL, RR_NULL, RECC_NULL, NULL, RECA_NULL}
+  ,
+
+  //###########
+  //#
+  //# Temporary and esoteric values.
+  //#
+  //###########
+  {RECT_CONFIG, "proxy.config.cache.http.compatibility.4-2-0-fixup", RECD_INT, "1", RECU_DYNAMIC, RR_NULL, RECC_NULL, NULL, RECA_NULL}
   ,
 
   //##############################################################################

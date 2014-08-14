@@ -1391,6 +1391,7 @@ HttpConfig::startup()
   HttpEstablishStaticConfigByte(c.oride.cache_ignore_auth, "proxy.config.http.cache.ignore_authentication");
   HttpEstablishStaticConfigByte(c.oride.cache_urls_that_look_dynamic, "proxy.config.http.cache.cache_urls_that_look_dynamic");
   HttpEstablishStaticConfigByte(c.cache_enable_default_vary_headers, "proxy.config.http.cache.enable_default_vary_headers");
+  HttpEstablishStaticConfigByte(c.cache_post_method, "proxy.config.http.cache.post_method");
 
   HttpEstablishStaticConfigByte(c.ignore_accept_mismatch, "proxy.config.http.cache.ignore_accept_mismatch");
   HttpEstablishStaticConfigByte(c.ignore_accept_language_mismatch, "proxy.config.http.cache.ignore_accept_language_mismatch");
@@ -1500,7 +1501,7 @@ HttpConfig::reconfigure()
   params->no_dns_forward_to_parent = INT_TO_BOOL(m_master.no_dns_forward_to_parent);
   params->uncacheable_requests_bypass_parent = INT_TO_BOOL(m_master.uncacheable_requests_bypass_parent);
   params->no_origin_server_dns = INT_TO_BOOL(m_master.no_origin_server_dns);
-  params->use_client_target_addr = INT_TO_BOOL(m_master.use_client_target_addr);
+  params->use_client_target_addr = m_master.use_client_target_addr;
   params->use_client_source_port = INT_TO_BOOL(m_master.use_client_source_port);
   params->oride.maintain_pristine_host_hdr = INT_TO_BOOL(m_master.oride.maintain_pristine_host_hdr);
 
@@ -1643,6 +1644,7 @@ HttpConfig::reconfigure()
   params->oride.cache_ignore_auth = INT_TO_BOOL(m_master.oride.cache_ignore_auth);
   params->oride.cache_urls_that_look_dynamic = INT_TO_BOOL(m_master.oride.cache_urls_that_look_dynamic);
   params->cache_enable_default_vary_headers = INT_TO_BOOL(m_master.cache_enable_default_vary_headers);
+  params->cache_post_method = INT_TO_BOOL(m_master.cache_post_method);
 
   params->ignore_accept_mismatch = m_master.ignore_accept_mismatch;
   params->ignore_accept_language_mismatch = m_master.ignore_accept_language_mismatch;

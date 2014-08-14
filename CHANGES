@@ -1,6 +1,30 @@
                                                          -*- coding: utf-8 -*-
 Changes with Apache Traffic Server 5.1.0
 
+  *) [TS-698] Add IP filter to logging.
+
+  *) [TS-3002] Add DSCP support to header_rewrite.
+
+  *) [TS-2564] Cherry pick for full cache compatibility.
+
+  *) [TS-2362] Make cache backwards compatible to 3.2.0.
+
+  *) [TS-2357] Add option to cache POST requests
+
+  *) [TS-2996] Add consistent hash method to parent selection.
+
+  *) [TS-2332] Add Consistent Hash class.
+
+  *) [TS-1800] Create one hashing infrastructure.
+
+  *) [TS-2860] Add AArch64 support.
+
+  *) [TS-2916] set response header properly for combo_handler plugin.
+
+  *) [TS-2883] Core dump in TSFetchCreate()
+
+  *) [TS-2991] SessionManager incorrectly releasing sessions back to pool
+
   *) [TS-2986] Adding stats to TLS errors
 
   *) [TS-2977] Move traffic_manager under the cmd subdirectory.

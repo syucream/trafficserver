@@ -319,7 +319,7 @@ Vol::aggWriteDone(int event, Event *e)
     header->write_pos += io.aiocb.aio_nbytes;
     ink_assert(header->write_pos >= start);
     DDebug("cache_agg", "Dir %s, Write: %" PRIu64 ", last Write: %" PRIu64 "\n",
-          hash_text, header->write_pos, header->last_write_pos);
+          hash_text.get(), header->write_pos, header->last_write_pos);
     ink_assert(header->write_pos == header->agg_pos);
     if (header->write_pos + EVACUATION_SIZE > scan_pos)
       periodic_scan();
@@ -330,7 +330,7 @@ Vol::aggWriteDone(int event, Event *e)
     // for fragments is this aggregation buffer
     Debug("cache_disk_error", "Write error on disk %s\n \
               write range : [%" PRIu64 " - %" PRIu64 " bytes]  [%" PRIu64 " - %" PRIu64 " blocks] \n",
-          hash_text, (uint64_t)io.aiocb.aio_offset,
+          hash_text.get(), (uint64_t)io.aiocb.aio_offset,
           (uint64_t)io.aiocb.aio_offset + io.aiocb.aio_nbytes,
           (uint64_t)io.aiocb.aio_offset / CACHE_BLOCK_SIZE,
           (uint64_t)(io.aiocb.aio_offset + io.aiocb.aio_nbytes) / CACHE_BLOCK_SIZE);
@@ -400,9 +400,9 @@ CacheVC::evacuateReadHead(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */
     goto Lcollision;
 #ifdef HTTP_CACHE
   alternate_tmp = 0;
-  if (doc->ftype == CACHE_FRAG_TYPE_HTTP && doc->hlen) {
+  if (doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen) {
     // its an http document
-    if (vector.get_handles(doc->hdr(), doc->hlen) != doc->hlen) {
+    if (this->load_http_info(&vector, doc) != doc->hlen) {
       Note("bad vector detected during evacuation");
       goto Ldone;
     }
@@ -751,8 +751,10 @@ agg_copy(char *p, CacheVC *vc)
     doc->magic = DOC_MAGIC;
     doc->len = len;
     doc->hlen = vc->header_len;
-    doc->ftype = vc->frag_type;
-    doc->_flen = 0;
+    doc->doc_type = vc->frag_type;
+    doc->v_major = CACHE_DB_MAJOR_VERSION;
+    doc->v_minor = CACHE_DB_MINOR_VERSION;
+    doc->unused = 0; // force this for forward compatibility.
     doc->total_len = vc->total_len;
     doc->first_key = vc->first_key;
     doc->sync_serial = vol->header->sync_serial;
@@ -1499,7 +1501,7 @@ CacheVC::openWriteStartDone(int event, Event *e)
         goto Lcollision;
 
       if (doc->magic != DOC_MAGIC || !doc->hlen ||
-          write_vector->get_handles(doc->hdr(), doc->hlen, buf) != doc->hlen) {
+          this->load_http_info(write_vector, doc, buf) != doc->hlen) {
         err = ECACHE_BAD_META_DATA;
 #if TS_USE_INTERIM_CACHE == 1
         if (dir_ininterim(&dir)) {

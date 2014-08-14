@@ -217,7 +217,7 @@ CacheVC::scanObject(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
       continue;
     }
       
-    if (doc->ftype != CACHE_FRAG_TYPE_HTTP || !doc->hlen)
+    if (doc->doc_type != CACHE_FRAG_TYPE_HTTP || !doc->hlen)
       goto Lskip;
 
     last_collision = NULL;
@@ -246,7 +246,7 @@ CacheVC::scanObject(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
         tmp += r;
       }
     }
-    if (vector.get_handles(doc->hdr(), doc->hlen) != doc->hlen)
+    if (this->load_http_info(&vector, doc) != doc->hlen)
       goto Lskip;
     changed = false;
     hostinfo_copied = 0;

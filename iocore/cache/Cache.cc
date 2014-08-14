@@ -35,6 +35,7 @@
 #include "HttpSM.h"
 #include "HttpCacheSM.h"
 #include "InkAPIInternal.h"
+#include "P_CacheBC.h"
 #endif
 
 // Compilation Options
@@ -43,6 +44,8 @@
 
 static size_t DEFAULT_RAM_CACHE_MULTIPLIER = 10; // I.e. 10x 1MB per 1GB of disk.
 
+// This is the oldest version number that is still usable.
+static short int const CACHE_DB_MAJOR_VERSION_COMPATIBLE = 21;
 
 #define DOCACHE_CLEAR_DYN_STAT(x) \
 do { \
@@ -78,6 +81,9 @@ int cache_config_read_while_writer = 0;
 int cache_config_mutex_retry_delay = 2;
 #ifdef HTTP_CACHE
 static int enable_cache_empty_http_doc = 0;
+/// Fix up a specific known problem with the 4.2.0 release.
+/// Not used for stripes with a cache version later than 4.2.0.
+int cache_config_compatibility_4_2_0_fixup = 1;
 #endif
 
 #if TS_USE_INTERIM_CACHE == 1
@@ -733,10 +739,14 @@ CacheProcessor::start_internal(int flags)
         }
       }
       if (diskok) {
-        gdisks[gndisks] = new CacheDisk();
-        gdisks[gndisks]->forced_volume_num = sd->vol_num;
-        Debug("cache_hosting", "Disk: %d, blocks: %d", gndisks, blocks);
         int sector_size = sd->hw_sector_size;
+
+        gdisks[gndisks] = new CacheDisk();
+        gdisks[gndisks]->forced_volume_num = sd->forced_volume_num;
+        if (sd->hash_seed_string)
+          gdisks[gndisks]->hash_seed_string = ats_strdup(sd->hash_seed_string);
+
+        Debug("cache_hosting", "Disk: %d, blocks: %d", gndisks, blocks);
 
         if (sector_size < cache_config_force_sector_size)
           sector_size = cache_config_force_sector_size;
@@ -935,6 +945,19 @@ CacheProcessor::cacheInitialized()
     }
   }
 
+  // Update stripe version data.
+  if (gnvol) // start with whatever the first stripe is.
+    cacheProcessor.min_stripe_version = cacheProcessor.max_stripe_version = gvol[0]->header->version;
+  // scan the rest of the stripes.
+  for (i = 1; i < gnvol; i++) {
+    Vol* v = gvol[i];
+    if (v->header->version < cacheProcessor.min_stripe_version)
+      cacheProcessor.min_stripe_version = v->header->version;
+    if (cacheProcessor.max_stripe_version < v->header->version)
+      cacheProcessor.max_stripe_version = v->header->version;
+  }
+
+
   if (caches_ready) {
     Debug("cache_init", "CacheProcessor::cacheInitialized - caches_ready=0x%0X, gnvol=%d", (unsigned int) caches_ready,
           gnvol);
@@ -1114,7 +1137,7 @@ int
 Vol::db_check(bool /* fix ATS_UNUSED */ )
 {
   char tt[256];
-  printf("    Data for [%s]\n", hash_text);
+  printf("    Data for [%s]\n", hash_text.get());
   printf("        Length:          %" PRIu64 "\n", (uint64_t)len);
   printf("        Write Position:  %" PRIu64 "\n", (uint64_t) (header->write_pos - skip));
   printf("        Phase:           %d\n", (int)!!header->phase);
@@ -1212,7 +1235,7 @@ vol_dir_clear(Vol *d)
   vol_clear_init(d);
 
   if (pwrite(d->fd, d->raw_dir, dir_len, d->skip) < 0) {
-    Warning("unable to clear cache directory '%s'", d->hash_text);
+    Warning("unable to clear cache directory '%s'", d->hash_text.get());
     return -1;
   }
   return 0;
@@ -1240,15 +1263,18 @@ Vol::clear_dir()
 int
 Vol::init(char *s, off_t blocks, off_t dir_skip, bool clear)
 {
-  dir_skip = ROUND_TO_STORE_BLOCK((dir_skip < START_POS ? START_POS : dir_skip));
-  path = ats_strdup(s);
-  const size_t hash_text_size = strlen(s) + 32;
-  hash_text = (char *)ats_malloc(hash_text_size);
-  ink_strlcpy(hash_text, s, hash_text_size);
-  const size_t s_size = strlen(s);
-  snprintf(hash_text + s_size, (hash_text_size - s_size), " %" PRIu64 ":%" PRIu64 "",
+  char* seed_str = disk->hash_seed_string ? disk->hash_seed_string : s;
+  const size_t hash_seed_size = strlen(seed_str);
+  const size_t hash_text_size = hash_seed_size + 32;
+
+  hash_text = static_cast<char *>(ats_malloc(hash_text_size));
+  ink_strlcpy(hash_text, seed_str, hash_text_size);
+  snprintf(hash_text + hash_seed_size, (hash_text_size - hash_seed_size), " %" PRIu64 ":%" PRIu64 "",
            (uint64_t)dir_skip, (uint64_t)blocks);
   MD5Context().hash_immediate(hash_id, hash_text, strlen(hash_text));
+
+  dir_skip = ROUND_TO_STORE_BLOCK((dir_skip < START_POS ? START_POS : dir_skip));
+  path = ats_strdup(s);
   len = blocks * STORE_BLOCK_SIZE;
   ink_assert(len <= MAX_VOL_SIZE);
   skip = dir_skip;
@@ -1286,7 +1312,7 @@ Vol::init(char *s, off_t blocks, off_t dir_skip, bool clear)
 #endif
 
   if (clear) {
-    Note("clearing cache directory '%s'", hash_text);
+    Note("clearing cache directory '%s'", hash_text.get());
     return clear_dir();
   }
 
@@ -1296,7 +1322,7 @@ Vol::init(char *s, off_t blocks, off_t dir_skip, bool clear)
   // try A
   off_t as = skip;
   if (is_debug_tag_set("cache_init"))
-    Note("reading directory '%s'", hash_text);
+    Note("reading directory '%s'", hash_text.get());
   SET_HANDLER(&Vol::handle_header_read);
   init_info->vol_aio[0].aiocb.aio_offset = as;
   init_info->vol_aio[1].aiocb.aio_offset = as + footer_offset;
@@ -1330,7 +1356,7 @@ Vol::handle_dir_clear(int event, void *data)
   if (event == AIO_EVENT_DONE) {
     op = (AIOCallback *) data;
     if ((size_t) op->aio_result != (size_t) op->aiocb.aio_nbytes) {
-      Warning("unable to clear cache directory '%s'", hash_text);
+      Warning("unable to clear cache directory '%s'", hash_text.get());
       fd = -1;
     }
 
@@ -1363,9 +1389,11 @@ Vol::handle_dir_read(int event, void *data)
     }
   }
 
-  if (header->magic != VOL_MAGIC || header->version.ink_major != CACHE_DB_MAJOR_VERSION || footer->magic != VOL_MAGIC) {
-    Warning("bad footer in cache directory for '%s', clearing", hash_text);
-    Note("clearing cache directory '%s'", hash_text);
+  if (!(header->magic == VOL_MAGIC &&  footer->magic == VOL_MAGIC &&
+        CACHE_DB_MAJOR_VERSION_COMPATIBLE <= header->version.ink_major &&  header->version.ink_major <= CACHE_DB_MAJOR_VERSION
+    )) {
+    Warning("bad footer in cache directory for '%s', clearing", hash_text.get());
+    Note("clearing cache directory '%s'", hash_text.get());
     clear_dir();
     return EVENT_DONE;
   }
@@ -1461,7 +1489,7 @@ Vol::handle_recover_from_data(int event, void * /* data ATS_UNUSED */ )
       io.aiocb.aio_nbytes = (skip + len) - recover_pos;
   } else if (event == AIO_EVENT_DONE) {
     if ((size_t) io.aiocb.aio_nbytes != (size_t) io.aio_result) {
-      Warning("disk read error on recover '%s', clearing", hash_text);
+      Warning("disk read error on recover '%s', clearing", hash_text.get());
       goto Lclear;
     }
     if (io.aiocb.aio_offset == header->last_write_pos) {
@@ -1478,7 +1506,7 @@ Vol::handle_recover_from_data(int event, void * /* data ATS_UNUSED */ )
       while (done < to_check) {
         Doc *doc = (Doc *) (s + done);
         if (doc->magic != DOC_MAGIC || doc->write_serial > header->write_serial) {
-          Warning("no valid directory found while recovering '%s', clearing", hash_text);
+          Warning("no valid directory found while recovering '%s', clearing", hash_text.get());
           goto Lclear;
         }
         done += round_to_approx_size(doc->len);
@@ -1621,7 +1649,7 @@ Ldone:{
     recover_pos += EVACUATION_SIZE;   // safely cover the max write size
     if (recover_pos < header->write_pos && (recover_pos + EVACUATION_SIZE >= header->write_pos)) {
       Debug("cache_init", "Head Pos: %" PRIu64 ", Rec Pos: %" PRIu64 ", Wrapped:%d", header->write_pos, recover_pos, recover_wrapped);
-      Warning("no valid directory found while recovering '%s', clearing", hash_text);
+      Warning("no valid directory found while recovering '%s', clearing", hash_text.get());
       goto Lclear;
     }
 
@@ -1728,7 +1756,7 @@ Vol::handle_header_read(int event, void *data)
         (hf[0]->sync_serial >= hf[2]->sync_serial || hf[2]->sync_serial != hf[3]->sync_serial)) {
       SET_HANDLER(&Vol::handle_dir_read);
       if (is_debug_tag_set("cache_init"))
-        Note("using directory A for '%s'", hash_text);
+        Note("using directory A for '%s'", hash_text.get());
       io.aiocb.aio_offset = skip;
       ink_assert(ink_aio_read(&io));
     }
@@ -1737,11 +1765,11 @@ Vol::handle_header_read(int event, void *data)
 
       SET_HANDLER(&Vol::handle_dir_read);
       if (is_debug_tag_set("cache_init"))
-        Note("using directory B for '%s'", hash_text);
+        Note("using directory B for '%s'", hash_text.get());
       io.aiocb.aio_offset = skip + vol_dirlen(this);
       ink_assert(ink_aio_read(&io));
     } else {
-      Note("no good directory, clearing '%s'", hash_text);
+      Note("no good directory, clearing '%s'", hash_text.get());
       clear_dir();
       delete init_info;
       init_info = 0;
@@ -2343,8 +2371,89 @@ static void unmarshal_helper(Doc *doc, Ptr<IOBufferData> &buf, int &okay) {
     tmp += r;
   }
 }
+
+/** Upgrade a marshalled fragment buffer to the current version.
+
+    @internal I looked at doing this in place (rather than a copy & modify) but
+    - The in place logic would be even worse than this mess
+    - It wouldn't save you that much, since you end up doing inserts early in the buffer.
+      Without extreme care in the logic it could end up doing more copying thatn
+      the simpler copy & modify.
+
+    @internal This logic presumes the existence of some slack at the end of the buffer, which
+    is usually the case (because lots of rounding is done). If there isn't enough slack then
+    this fails and we have a cache miss. The assumption that this is sufficiently rare that
+    code simplicity takes precedence should be checked at some point.
+ */
+static bool upgrade_doc_version(Ptr<IOBufferData>& buf) {
+  // Type definition is close enough to use for initial checking.
+  cache_bc::Doc_v23* doc = reinterpret_cast<cache_bc::Doc_v23*>(buf->data());
+  bool zret = true;
+
+  if (DOC_MAGIC == doc->magic) {
+    if (0 == doc->hlen) {
+      Debug("cache_bc", "Doc %p without header, no upgrade needed.", doc);
+    } else if (CACHE_FRAG_TYPE_HTTP_V23 == doc->doc_type) {
+      cache_bc::HTTPCacheAlt_v21* alt = reinterpret_cast<cache_bc::HTTPCacheAlt_v21*>(doc->hdr());
+      if (alt && alt->is_unmarshalled_format()) {
+        Ptr<IOBufferData> d_buf(ioDataAllocator.alloc());
+        Doc* d_doc;
+        char* src;
+        char* dst;
+        char* hdr_limit = doc->data();
+        HTTPInfo::FragOffset* frags = reinterpret_cast<HTTPInfo::FragOffset*>(static_cast<char*>(buf->data()) + cache_bc::sizeofDoc_v23);
+        int frag_count = doc->_flen / sizeof(HTTPInfo::FragOffset);
+        size_t n = 0;
+        size_t content_size = doc->data_len();
+
+        Debug("cache_bc", "Doc %p is 3.2", doc);
+
+        // Use the same buffer size, fail if no fit.
+        d_buf->alloc(buf->_size_index, buf->_mem_type); // Duplicate.
+        d_doc = reinterpret_cast<Doc*>(d_buf->data());
+        n = d_buf->block_size();
+
+        src = buf->data();
+        dst = d_buf->data();
+        memcpy(dst, src, sizeofDoc);
+        src += sizeofDoc + doc->_flen; dst += sizeofDoc; n -= sizeofDoc;
+        
+        // We copy the fragment table iff there is a fragment table and there is only one alternate.
+        if (frag_count > 0 && cache_bc::HTTPInfo_v21::marshalled_length(src) > doc->hlen)
+          frag_count = 0; // inhibit fragment table insertion.
+
+        while (zret && src < hdr_limit) {
+          zret = cache_bc::HTTPInfo_v21::copy_and_upgrade_unmarshalled_to_v23(dst, src, n, frag_count, frags);
+        }
+        if (zret && content_size <= n) {
+          memcpy(dst, src, content_size); // content
+          // Must update new Doc::len and Doc::hlen
+          // dst points at the first byte of the content, or one past the last byte of the alt header.
+          d_doc->len = (dst - reinterpret_cast<char*>(d_doc)) + content_size;
+          d_doc->hlen = (dst - reinterpret_cast<char*>(d_doc)) - sizeofDoc;
+          buf = d_buf; // replace original buffer with new buffer.
+        } else {
+          zret = false;
+        }
+      }
+      Doc* n_doc = reinterpret_cast<Doc*>(buf->data()); // access as current version.
+      // For now the base header size is the same. If that changes we'll need to handle the v22/23 case here
+      // as with the v21 and shift the content down to accomodate the bigger header.
+      ink_assert(sizeof(*n_doc) == sizeof(*doc));
+
+      n_doc->doc_type = CACHE_FRAG_TYPE_HTTP; // We converted so adjust doc_type.
+      // Set these to zero for debugging - they'll be updated to the current values if/when this is
+      // put in the aggregation buffer.
+      n_doc->v_major = 0;
+      n_doc->v_minor = 0;
+      n_doc->unused = 0; // force to zero to make future use easier.
+    }
+  }
+  return zret;
+}
 #endif
 
+// [amc] I think this is where all disk reads from cache funnel through here.
 int
 CacheVC::handleReadDone(int event, Event *e)
 {
@@ -2365,26 +2474,52 @@ CacheVC::handleReadDone(int event, Event *e)
       if (!io.ok()) {
         Debug("cache_disk_error", "Read error on disk %s\n \
 	    read range : [%" PRIu64 " - %" PRIu64 " bytes]  [%" PRIu64 " - %" PRIu64 " blocks] \n",
-              vol->hash_text, (uint64_t)io.aiocb.aio_offset, (uint64_t)io.aiocb.aio_offset + io.aiocb.aio_nbytes,
+              vol->hash_text.get(), (uint64_t)io.aiocb.aio_offset, (uint64_t)io.aiocb.aio_offset + io.aiocb.aio_nbytes,
               (uint64_t)io.aiocb.aio_offset / 512, (uint64_t)(io.aiocb.aio_offset + io.aiocb.aio_nbytes) / 512);
       }
       goto Ldone;
     }
 
+    doc = reinterpret_cast<Doc*>(buf->data());
     ink_assert(vol->mutex->nthread_holding < 1000);
-    ink_assert(((Doc *) buf->data())->magic == DOC_MAGIC);
+    ink_assert(doc->magic == DOC_MAGIC);
+
+    /* We've read the raw data from disk, time to deserialize it. We have to account for a variety of formats that
+       may be present.
+
+       As of cache version 24 we changed the @a doc_type to indicate a format change in the header which includes
+       version data inside the header. Prior to that we must use heuristics to deduce the actual format. For this reason
+       we send that header type off for special processing. Otherwise we can use the in object version to determine
+       the format.
+
+       All of this processing must produce a serialized header that is compliant with the current version. This includes
+       updating the doc_type.
+    */
+
+    if (doc->doc_type == CACHE_FRAG_TYPE_HTTP_V23) {
+      if (upgrade_doc_version(buf)) {
+        doc = reinterpret_cast<Doc*>(buf->data()); // buf may be a new copy 
+      } else {
+        Debug("cache_bc", "Upgrade of fragment failed - disk %s - doc id = %" PRIx64 ":%" PRIx64 "\n"
+              , vol->hash_text.get(), read_key->slice64(0), read_key->slice64(1));
+        doc->magic = DOC_CORRUPT;
+        // Should really trash the directory entry for this, as it's never going to work in the future.
+        // Or does that happen later anyway?
+        goto Ldone;
+      }
+    } // else if (doc->doc_type == CACHE_FRAG_TYPE_HTTP) // handle any version updates based on the object version in the header.
+
 #ifdef VERIFY_JTEST_DATA
     char xx[500];
-    if (read_key && *read_key == ((Doc *) buf->data())->key && request.valid() && !dir_head(&dir) && !vio.ndone) {
+    if (read_key && *read_key == doc->key && request.valid() && !dir_head(&dir) && !vio.ndone) {
       int ib = 0, xd = 0;
       request.url_get()->print(xx, 500, &ib, &xd);
       char *x = xx;
       for (int q = 0; q < 3; q++)
         x = strchr(x + 1, '/');
-      ink_assert(!memcmp(((Doc *) buf->data())->data(), x, ib - (x - xx)));
+      ink_assert(!memcmp(doc->data(), x, ib - (x - xx)));
     }
 #endif
-    doc = (Doc *) buf->data();
 
     if (is_debug_tag_set("cache_read")) {
       char xt[33];
@@ -2458,10 +2593,10 @@ CacheVC::handleReadDone(int event, Event *e)
       bool http_copy_hdr = false;
 #ifdef HTTP_CACHE
       http_copy_hdr = cache_config_ram_cache_compress && !f.doc_from_ram_cache &&
-        doc->ftype == CACHE_FRAG_TYPE_HTTP && doc->hlen;
+        doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen;
       // If http doc we need to unmarshal the headers before putting in the ram cache
       // unless it could be compressed
-      if (!http_copy_hdr && doc->ftype == CACHE_FRAG_TYPE_HTTP && doc->hlen && okay)
+      if (!http_copy_hdr && doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen && okay)
         unmarshal_helper(doc, buf, okay);
 #endif
       // Put the request in the ram cache only if its a open_read or lookup
@@ -2507,7 +2642,7 @@ CacheVC::handleReadDone(int event, Event *e)
       }                           // end VIO::READ check
 #ifdef HTTP_CACHE
       // If it could be compressed, unmarshal after
-      if (http_copy_hdr && doc->ftype == CACHE_FRAG_TYPE_HTTP && doc->hlen && okay)
+      if (http_copy_hdr && doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen && okay)
         unmarshal_helper(doc, buf, okay);
 #endif
     }                             // end io.ok() check
@@ -2618,7 +2753,7 @@ LramHit: {
     f.doc_from_ram_cache = true;
     io.aio_result = io.aiocb.aio_nbytes;
     Doc *doc = (Doc*)buf->data();
-    if (cache_config_ram_cache_compress && doc->ftype == CACHE_FRAG_TYPE_HTTP && doc->hlen) {
+    if (cache_config_ram_cache_compress && doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen) {
       SET_HANDLER(&CacheVC::handleReadDone);
       return EVENT_RETURN;
     }
@@ -3395,6 +3530,8 @@ ink_cache_init(ModuleVersion v)
 
 #ifdef HTTP_CACHE
   REC_EstablishStaticConfigInt32(enable_cache_empty_http_doc, "proxy.config.http.cache.allow_empty_doc");
+
+  REC_EstablishStaticConfigInt32(cache_config_compatibility_4_2_0_fixup, "proxy.config.cache.http.compatibility.4-2-0-fixup");
 #endif
 
 #if TS_USE_INTERIM_CACHE == 1
@@ -3521,3 +3658,104 @@ CacheProcessor::find_by_path(char const* path, int len)
 
   return 0;
 }
+
+// ----------------------------
+
+namespace cache_bc {
+  static size_t const HTTP_ALT_MARSHAL_SIZE = ROUND(sizeof(HTTPCacheAlt), HDR_PTR_SIZE); // current size.
+  size_t
+  HTTPInfo_v21::marshalled_length(void* data)
+  {
+    size_t zret = ROUND(sizeof(HTTPCacheAlt_v21), HDR_PTR_SIZE);
+    HTTPCacheAlt_v21* alt = static_cast<HTTPCacheAlt_v21*>(data);
+    HdrHeap* hdr;
+
+    hdr = reinterpret_cast<HdrHeap*>(reinterpret_cast<char*>(alt) + reinterpret_cast<uintptr_t>(alt->m_request_hdr.m_heap));
+    zret += ROUND(hdr->unmarshal_size(), HDR_PTR_SIZE);
+    hdr = reinterpret_cast<HdrHeap*>(reinterpret_cast<char*>(alt) + reinterpret_cast<uintptr_t>(alt->m_response_hdr.m_heap));
+    zret += ROUND(hdr->unmarshal_size(), HDR_PTR_SIZE);
+    return zret;
+  }
+
+  // Copy an unmarshalled instance from @a src to @a dst.
+  // @a src is presumed to be Cache version 21 and the result
+  // is Cache version 23. @a length is the buffer available in @a dst.
+  // @return @c false if something went wrong (e.g., data overrun).
+  bool
+  HTTPInfo_v21::copy_and_upgrade_unmarshalled_to_v23(
+    char*& dst, char*& src, size_t& length, int n_frags, FragOffset* frag_offsets
+    )
+  {
+    // Offsets of the data after the new stuff.
+    static const size_t OLD_OFFSET = offsetof(HTTPCacheAlt_v21, m_ext_buffer);
+    static const size_t NEW_OFFSET = offsetof(HTTPCacheAlt_v23, m_ext_buffer);
+
+    HTTPCacheAlt_v21* s_alt = reinterpret_cast<HTTPCacheAlt_v21*>(src);
+    HTTPCacheAlt_v23* d_alt = reinterpret_cast<HTTPCacheAlt_v23*>(dst);
+    HdrHeap_v23* s_hdr;
+    HdrHeap_v23* d_hdr;
+    size_t hdr_size;
+
+    if (length < HTTP_ALT_MARSHAL_SIZE) return false; // Absolutely no hope in this case.
+
+    memcpy(dst, src, OLD_OFFSET); // initially same data
+    // Now data that's now after extra
+    memcpy( static_cast<char*>(dst) + NEW_OFFSET
+            , static_cast<char*>(src) + OLD_OFFSET
+            , sizeof(HTTPCacheAlt_v21) - OLD_OFFSET
+      );
+    dst += HTTP_ALT_MARSHAL_SIZE; // move past fixed data.
+    length -= HTTP_ALT_MARSHAL_SIZE;
+
+    // Extra data is fragment table - set that if we have it.
+    if (n_frags) {
+      static size_t const IFT_SIZE = HTTPCacheAlt_v23::N_INTEGRAL_FRAG_OFFSETS * sizeof(FragOffset);
+      size_t ift_actual = min(n_frags, HTTPCacheAlt_v23::N_INTEGRAL_FRAG_OFFSETS) * sizeof(FragOffset);
+
+      if (length < (HTTP_ALT_MARSHAL_SIZE + n_frags * sizeof(FragOffset) - IFT_SIZE))
+        return false; // can't place fragment table.
+
+      d_alt->m_frag_offset_count = n_frags;
+      d_alt->m_frag_offsets = reinterpret_cast<FragOffset*>(dst - reinterpret_cast<char*>(d_alt));
+
+      memcpy(d_alt->m_integral_frag_offsets, frag_offsets, ift_actual);
+      n_frags -= HTTPCacheAlt_v23::N_INTEGRAL_FRAG_OFFSETS;
+      if (n_frags > 0) {
+        size_t k = sizeof(FragOffset) * n_frags;
+        memcpy(dst, frag_offsets + IFT_SIZE, k);
+        dst += k;
+        length -= k;
+      } else if (n_frags < 0) {
+        memset(dst + ift_actual, 0, IFT_SIZE - ift_actual);
+      }
+    } else {
+      d_alt->m_frag_offset_count = 0;
+      d_alt->m_frag_offsets = 0;
+      ink_zero(d_alt->m_integral_frag_offsets);
+    }
+
+    // Copy over the headers, tweaking the swizzled pointers.
+    s_hdr = reinterpret_cast<HdrHeap_v23*>(reinterpret_cast<char*>(s_alt) + reinterpret_cast<uintptr_t>(s_alt->m_request_hdr.m_heap));
+    d_hdr = reinterpret_cast<HdrHeap_v23*>(dst);
+    hdr_size = ROUND(s_hdr->unmarshal_size(), HDR_PTR_SIZE);
+    if (hdr_size > length) return false;
+    memcpy(d_hdr, s_hdr, hdr_size);
+    d_alt->m_request_hdr.m_heap = reinterpret_cast<HdrHeap_v23*>(reinterpret_cast<char*>(d_hdr) - reinterpret_cast<char*>(d_alt));
+    dst += hdr_size;
+    length -= hdr_size;
+
+    s_hdr = reinterpret_cast<HdrHeap_v23*>(reinterpret_cast<char*>(s_alt) + reinterpret_cast<uintptr_t>(s_alt->m_response_hdr.m_heap));
+    d_hdr = reinterpret_cast<HdrHeap_v23*>(dst);
+    hdr_size = ROUND(s_hdr->unmarshal_size(), HDR_PTR_SIZE);
+    if (hdr_size > length) return false;
+    memcpy(d_hdr, s_hdr, hdr_size);
+    d_alt->m_response_hdr.m_heap = reinterpret_cast<HdrHeap_v23*>(reinterpret_cast<char*>(d_hdr) - reinterpret_cast<char*>(d_alt));
+    dst += hdr_size;
+    length -= hdr_size;
+
+    src = reinterpret_cast<char*>(s_hdr) + hdr_size;
+  
+    return true;
+  }
+
+} // cache_bc
