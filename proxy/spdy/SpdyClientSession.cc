@@ -55,7 +55,7 @@ SpdyRequest::init(SpdyClientSession *sm, int id)
 {
   spdy_sm = sm;
   stream_id = id;
-  headers.clear();
+  req_headers.create(HTTP_TYPE_REQUEST);
 
   MD5_Init(&recv_md5);
   start_time = TShrtime();
@@ -73,16 +73,12 @@ SpdyRequest::clear()
     fetch_sm = NULL;
   }
 
-  vector<pair<string, string> >().swap(headers);
-
-  std::string().swap(url);
-  std::string().swap(host);
-  std::string().swap(path);
-  std::string().swap(scheme);
-  std::string().swap(method);
-  std::string().swap(version);
-
   Debug("spdy", "****Delete Request[%" PRIu64 ":%d]", spdy_sm->sm_id, stream_id);
+}
+
+MIMEParseResult
+parse_spdy_req(char **nv)
+{
 }
 
 void

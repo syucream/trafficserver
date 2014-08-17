@@ -60,13 +60,7 @@ public:
 
   void init(SpdyClientSession *sm, int id);
   void clear();
-
-  void append_nv(char **nv)
-  {
-    for(int i = 0; nv[i]; i += 2) {
-      headers.push_back(make_pair(nv[i], nv[i+1]));
-    }
-  }
+  MIMEParseResult parse_spdy_req(char **nv);
 
 public:
   int event;
@@ -79,14 +73,7 @@ public:
   int fetch_data_len;
   unsigned delta_window_size;
   bool fetch_body_completed;
-  vector<pair<string, string> > headers;
-
-  string url;
-  string host;
-  string path;
-  string scheme;
-  string method;
-  string version;
+  HTTPHdr req_headers;
 
   MD5_CTX recv_md5;
 };
