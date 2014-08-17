@@ -22,8 +22,8 @@
 // the request (or not) by consulting some authoritative source.
 //
 // This plugin follows the pattern of the basic-auth sample code. We use the
-// TS_HTTP_OS_DNS_HOOK to perform the initial authorization, and the
-// TS_HTTP_SEND_RESPONSE_HDR_HOOK to send an error response if necessary.
+// TS_HTTP_POST_REMAP_HOOK to perform the initial authorization, and
+// the TS_HTTP_SEND_RESPONSE_HDR_HOOK to send an error response if necessary.
 
 #include "utils.h"
 #include <string>
@@ -43,30 +43,30 @@ using std::strlen;
 
 struct AuthRequestContext;
 
-typedef bool(*AuthRequestTransform) (AuthRequestContext* auth, const sockaddr* saddr);
+typedef bool(*AuthRequestTransform) (AuthRequestContext* auth);
+
+const static int MAX_HOST_LENGTH = 4096;
 
 // We can operate in global plugin mode or remap plugin mode. If we are in
 // global mode, then we will authorize every request. In remap mode, we will
 // only authorize tagged requests.
-static bool AuthTaggedRequestOnly = false;
 static int AuthTaggedRequestArg = -1;
 
 static TSCont AuthOsDnsContinuation;
 
 struct AuthOptions
 {
-  char* hostname;
+  std::string hostname;
   int hostport;
-  bool force;
   AuthRequestTransform transform;
+  bool force;
 
   AuthOptions():
-    hostname(NULL), hostport(8080), force(false), transform(NULL)
+    hostport(-1), transform(NULL), force(false)
   { }
 
   ~AuthOptions()
   {
-    TSfree(hostname);
   }
 };
 
@@ -88,7 +88,6 @@ struct StateTransition
 };
 
 static TSEvent StateAuthProxyConnect(AuthRequestContext*, void*);
-static TSEvent StateAuthProxyResolve(AuthRequestContext*, void*);
 static TSEvent StateAuthProxyWriteComplete(AuthRequestContext*, void*);
 static TSEvent StateUnauthorized(AuthRequestContext*, void*);
 static TSEvent StateAuthorized(AuthRequestContext*, void*);
@@ -140,7 +139,6 @@ static const StateTransition StateTableProxyReadHeader[] = {
 
 // State table for sending the request to the auth proxy.
 static const StateTransition StateTableProxyRequest[] = {
-  { TS_EVENT_HOST_LOOKUP, StateAuthProxyConnect, StateTableProxyRequest},
   { TS_EVENT_VCONN_WRITE_COMPLETE, StateAuthProxyWriteComplete, StateTableProxyReadHeader },
   { TS_EVENT_ERROR, StateUnauthorized, NULL },
   { TS_EVENT_NONE, NULL, NULL }
@@ -148,7 +146,7 @@ static const StateTransition StateTableProxyRequest[] = {
 
 // Initial state table.
 static const StateTransition StateTableInit[] = {
-  { TS_EVENT_HTTP_OS_DNS, StateAuthProxyResolve, StateTableProxyRequest },
+  { TS_EVENT_HTTP_POST_REMAP, StateAuthProxyConnect, StateTableProxyRequest },
   { TS_EVENT_ERROR, StateUnauthorized, NULL },
   { TS_EVENT_NONE, NULL, NULL }
 };
@@ -288,7 +286,7 @@ AuthChainAuthorizationResponse(AuthRequestContext* auth)
 
 // Transform the client request into a HEAD request and write it out.
 static bool
-AuthWriteHeadRequest(AuthRequestContext* auth, const sockaddr* /* saddr ATS_UNUSED */ )
+AuthWriteHeadRequest(AuthRequestContext* auth)
 {
   HttpHeader rq;
   TSMBuffer mbuf;
@@ -322,28 +320,19 @@ AuthWriteHeadRequest(AuthRequestContext* auth, const sockaddr* /* saddr ATS_UNUS
 // Transform the client request into a form that the auth proxy can consume and
 // write it out.
 static bool
-AuthWriteRedirectedRequest(AuthRequestContext* auth, const sockaddr* saddr)
+AuthWriteRedirectedRequest(AuthRequestContext* auth)
 {
+  const AuthOptions* options = auth->options();
   HttpHeader rq;
   TSMBuffer mbuf;
   TSMLoc mhdr;
   TSMLoc murl;
-  char addrbuf[INET6_ADDRSTRLEN];
-  char hostbuf[INET6_ADDRSTRLEN + sizeof("[]") + sizeof(":65536")];
-  uint16_t hostport;
+  char hostbuf[MAX_HOST_LENGTH + 1];
 
   TSReleaseAssert(TSHttpTxnClientReqGet(auth->txn, &mbuf, &mhdr) == TS_SUCCESS);
 
   // First, copy the whole client request to our new auth proxy request.
   TSReleaseAssert(TSHttpHdrCopy(rq.buffer, rq.header, mbuf, mhdr) == TS_SUCCESS);
-
-  hostport = SockaddrGetPort(saddr);
-  inet_ntop(saddr->sa_family, SockaddrGetAddress(saddr), addrbuf, sizeof(addrbuf));
-  if (saddr->sa_family == PF_INET6) {
-    snprintf(hostbuf, sizeof(hostbuf), "[%s]:%d", addrbuf, hostport);
-  } else {
-    snprintf(hostbuf, sizeof(hostbuf), "%s:%d", addrbuf, hostport);
-  }
 
   // Next, we need to rewrite the client request URL so that the request goes to
   // the auth proxy instead of the original request.
@@ -353,8 +342,14 @@ AuthWriteRedirectedRequest(AuthRequestContext* auth, const sockaddr* saddr)
   // scheme, forcing ATS to go to the Host header. I wonder how HTTPS would
   // work in that case. At any rate, we should add a new header containing
   // the original host so that the auth proxy can examine it.
-  TSUrlHostSet(rq.buffer, murl, addrbuf, -1);
-  TSUrlPortSet(rq.buffer, murl, hostport);
+  TSUrlHostSet(rq.buffer, murl, options->hostname.c_str(), options->hostname.size());
+  if (-1 != options->hostport) {
+    snprintf(hostbuf, sizeof(hostbuf), "%s:%d", options->hostname.c_str(), options->hostport);
+    TSUrlPortSet(rq.buffer, murl, options->hostport);
+  } else {
+    snprintf(hostbuf, sizeof(hostbuf), "%s", options->hostname.c_str());
+  }
+
   TSHandleMLocRelease(rq.buffer, rq.header, murl);
 
   HttpSetMimeHeader(rq.buffer, rq.header, TS_MIME_FIELD_HOST, hostbuf);
@@ -372,86 +367,23 @@ AuthWriteRedirectedRequest(AuthRequestContext* auth, const sockaddr* saddr)
 }
 
 static TSEvent
-StateAuthProxyResolve(AuthRequestContext* auth, void*)
-{
-  TSAction lookup;
-  const AuthOptions* options = auth->options();
-
-  // If we are authorizing with a HEAD request we want to send that to the
-  // origin; other requests we want to send to the authorization proxy.
-  if (options->transform == AuthWriteHeadRequest) {
-    char hostname[TS_MAX_HOST_NAME_LEN * 2];
-    TSMBuffer mbuf;
-    TSMLoc mhdr;
-
-    TSReleaseAssert(TSHttpTxnClientReqGet(auth->txn, &mbuf, &mhdr) == TS_SUCCESS);
-
-    if (HttpGetOriginHost(mbuf, mhdr, hostname, sizeof(hostname))) {
-      AuthLogDebug("resolving authorization host %s", hostname);
-      lookup = TSHostLookup(auth->cont, hostname, strlen(hostname));
-      TSHandleMLocRelease(mbuf, TS_NULL_MLOC, mhdr);
-    } else {
-      AuthLogError("failed to extract origin host name from client request");
-      TSHandleMLocRelease(mbuf, TS_NULL_MLOC, mhdr);
-      return TS_EVENT_ERROR;
-    }
-
-  } else {
-    AuthLogDebug("resolving authorization proxy host %s", options->hostname);
-    lookup = TSHostLookup(auth->cont, options->hostname, strlen(options->hostname));
-  }
-
-  if (TSActionDone(lookup)) {
-    AuthLogDebug("host lookup was executed in line");
-    return TS_EVENT_NONE;
-  }
-
-  return TS_EVENT_CONTINUE;
-}
-
-static TSEvent
-StateAuthProxyConnect(AuthRequestContext* auth, void* edata)
+StateAuthProxyConnect(AuthRequestContext* auth, void* /* edata ATS_UNUSED */)
 {
   const AuthOptions* options = auth->options();
-  TSHostLookupResult dns;
-  const sockaddr* saddr;
+  struct sockaddr const* ip = TSHttpTxnClientAddrGet(auth->txn);
 
-  union
-  {
-    sockaddr sa;
-    sockaddr_in sin;
-    sockaddr_in6 sin6;
-    sockaddr_storage storage;
-  } addr;
-
-  dns = (TSHostLookupResult) edata;
-  if (dns == NULL) {
-    AuthLogError("failed to resolve authorization proxy at %s", options->hostname);
-    return TS_EVENT_ERROR;
-  }
-  // Copy the resolved address and add the port.
-  saddr = TSHostLookupResultAddrGet(dns);
-  switch (saddr->sa_family) {
-  case PF_INET:
-    memcpy(&addr.sin, saddr, sizeof(sockaddr_in));
-    addr.sin.sin_port = options->hostport;
-    break;
-  case PF_INET6:
-    memcpy(&addr.sin6, saddr, sizeof(sockaddr_in6));
-    addr.sin6.sin6_port = options->hostport;
-    break;
-  }
+  TSReleaseAssert(ip); // We must have a client IP.
 
   auth->is_head = AuthRequestIsHead(auth->txn);
   AuthLogDebug("client request %s a HEAD request", auth->is_head ? "is" : "is not");
 
-  auth->vconn = TSHttpConnect(&addr.sa);
+  auth->vconn = TSHttpConnect(ip);
   if (auth->vconn == NULL) {
     return TS_EVENT_ERROR;
   }
   // Transform the client request into an auth proxy request and write it
   // out to the auth proxy vconn.
-  if (!options->transform(auth, &addr.sa)) {
+  if (!options->transform(auth)) {
     return TS_EVENT_ERROR;
   }
   // Start a write and transition to WriteAuthProxyState.
@@ -677,35 +609,33 @@ static int
 AuthProxyGlobalHook(TSCont /* cont ATS_UNUSED */ , TSEvent event, void* edata)
 {
   AuthRequestContext* auth;
-  union
-  {
-    TSHostLookupResult dns;
-    TSHttpTxn txn;
-    void* edata;
-  } ptr;
+  TSHttpTxn txn = (TSHttpTxn)edata;
 
-  ptr.edata = edata;
   AuthLogDebug("handling event=%d edata=%p", (int) event, edata);
 
   switch (event) {
-  case TS_EVENT_HTTP_OS_DNS:
+  case TS_EVENT_HTTP_POST_REMAP:
     // Ignore internal requests since we generated them.
-    if (TSHttpIsInternalRequest(ptr.txn) == TS_SUCCESS) {
+    if (TSHttpIsInternalRequest(txn) == TS_SUCCESS) {
       // All our internal requests *must* hit the origin since it is the
       // agent that needs to make the authorization decision. We can't
-      // allow that to be cached.
-      TSHttpTxnReqCacheableSet(ptr.txn, 0);
+      // allow that to be cached. Note that this only affects the remap
+      // rule that this plugin is instantiated for, *unless* you are using
+      // it as a global plugin (not highly recommended). Also remember that
+      // the HEAD auth request might trip a different remap rule, particularly
+      // if you do not have pristine host-headers enabled.
+      TSHttpTxnConfigIntSet(txn, TS_CONFIG_HTTP_CACHE_HTTP, 0);
 
       AuthLogDebug("re-enabling internal transaction");
-      TSHttpTxnReenable(ptr.txn, TS_EVENT_HTTP_CONTINUE);
+      TSHttpTxnReenable(txn, TS_EVENT_HTTP_CONTINUE);
       return TS_EVENT_NONE;
     }
     // Hook this request if we are in global authorization mode or if a
     // remap rule tagged it.
-    if (AuthGlobalOptions != NULL || AuthRequestIsTagged(ptr.txn)) {
+    if (AuthGlobalOptions != NULL || AuthRequestIsTagged(txn)) {
       auth = AuthRequestContext::allocate();
       auth->state = StateTableInit;
-      auth->txn = ptr.txn;
+      auth->txn = txn;
       return AuthRequestContext::dispatch(auth->cont, event, edata);
     }
     // fallthru
@@ -733,7 +663,6 @@ AuthParseOptions(int argc, const char** argv)
   AuthOptions* options = AuthNew<AuthOptions>();
 
   options->transform = AuthWriteRedirectedRequest;
-  options->hostname = TSstrdup("127.0.0.1");
 
   // We might parse arguments multiple times if we are loaded as a global
   // plugin and a remap plugin. Reset optind so that getopt_long() does the
@@ -746,8 +675,7 @@ AuthParseOptions(int argc, const char** argv)
     opt = getopt_long(argc, (char* const *) argv, "", longopt, NULL);
     switch (opt) {
     case 'h':
-      TSfree(options->hostname);
-      options->hostname = TSstrdup(optarg);
+      options->hostname = optarg;
       break;
     case 'p':
       options->hostport = std::atoi(optarg);
@@ -764,13 +692,16 @@ AuthParseOptions(int argc, const char** argv)
         AuthLogError("invalid authorization transform '%s'", optarg);
         // XXX make this a fatal error?
       }
-
       break;
     }
 
     if (opt == -1) {
       break;
     }
+  }
+
+  if (options->hostname.empty()) {
+    options->hostname = "127.0.0.1";
   }
 
   return options;
@@ -794,16 +725,12 @@ TSPluginInit(int argc, const char* argv[])
   TSReleaseAssert(TSHttpArgIndexReserve("AuthProxy", "AuthProxy authorization tag", &AuthTaggedRequestArg) ==
                   TS_SUCCESS);
 
-  // We are in global mode. Authorize all requests.
-  AuthTaggedRequestOnly = false;
-
   AuthOsDnsContinuation = TSContCreate(AuthProxyGlobalHook, NULL);
   AuthGlobalOptions = AuthParseOptions(argc, argv);
-  AuthLogDebug("using authorization proxy at %s:%d", AuthGlobalOptions->hostname, AuthGlobalOptions->hostport);
+  AuthLogDebug("using authorization proxy at %s:%d", AuthGlobalOptions->hostname.c_str(), AuthGlobalOptions->hostport);
 
-  // Catch the DNS hook. This triggers after reading the headers and
-  // resolving the requested host, but before performing any cache lookups.
-  TSHttpHookAdd(TS_HTTP_OS_DNS_HOOK, AuthOsDnsContinuation);
+  // Use the appropriate hook for consistent auth checks.
+  TSHttpHookAdd(TS_HTTP_POST_REMAP_HOOK, AuthOsDnsContinuation);
 }
 
 TSReturnCode
@@ -812,8 +739,6 @@ TSRemapInit(TSRemapInterface* /* api ATS_UNUSED */, char* /* err ATS_UNUSED */, 
   TSReleaseAssert(TSHttpArgIndexReserve("AuthProxy", "AuthProxy authorization tag", &AuthTaggedRequestArg) ==
                   TS_SUCCESS);
 
-  // We are in remap mode. Only authorize tagged requests.
-  AuthTaggedRequestOnly = true;
   AuthOsDnsContinuation = TSContCreate(AuthProxyGlobalHook, NULL);
   return TS_SUCCESS;
 }
@@ -849,7 +774,8 @@ TSRemapDoRemap(void* instance, TSHttpTxn txn, TSRemapRequestInfo* /* rri ATS_UNU
   AuthOptions* options = (AuthOptions*) instance;
 
   TSHttpTxnArgSet(txn, AuthTaggedRequestArg, options);
-  TSHttpTxnHookAdd(txn, TS_HTTP_OS_DNS_HOOK, AuthOsDnsContinuation);
+  TSHttpTxnHookAdd(txn, TS_HTTP_POST_REMAP_HOOK, AuthOsDnsContinuation);
+
   return TSREMAP_NO_REMAP;
 }
 
