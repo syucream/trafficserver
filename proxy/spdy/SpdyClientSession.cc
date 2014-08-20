@@ -77,8 +77,49 @@ SpdyRequest::clear()
 }
 
 MIMEParseResult
-parse_spdy_req(char **nv)
+SpdyRequest::parse_spdy_req(char **nv)
 {
+  char *scheme = NULL, *host = NULL, *path = NULL;
+
+  for(int i = 0; nv[i]; i += 2) {
+    if (strncmp(nv[i], ":scheme", 7) == 0) {
+      scheme = nv[i+1];
+    } else if (strncmp(nv[i], ":host", 5) == 0) {
+      host = nv[i+1];
+    } else if (strncmp(nv[i], ":path", 5) == 0) {
+      path = nv[i+1];
+    } else if (strncmp(nv[i], ":method", 7) == 0) {
+      int len = strlen(nv[i+1]);
+      int method_wks_idx = hdrtoken_tokenize(nv[i+1], len);
+      http_hdr_method_set(req_headers.m_heap, req_headers.m_http, nv[i+1], method_wks_idx, len, 1);
+    } else {
+      int field_name_wks_idx = hdrtoken_tokenize(nv[i], strlen(nv[i]));
+      MIMEField *field = mime_field_create(req_headers.m_heap, req_headers.m_http->m_fields_impl);
+      mime_field_name_value_set(req_headers.m_heap, req_headers.m_http->m_fields_impl, field,
+                                field_name_wks_idx,
+                                nv[i], strlen(nv[i]),
+                                nv[i+1], strlen(nv[i+1]),
+                                true, strlen(nv[i]) + strlen(nv[i+1]), 1);
+      mime_hdr_field_attach(req_headers.m_http->m_fields_impl, field, 1, NULL);
+    }
+  }
+  char* url_end = static_cast<char*>(ats_malloc(strlen(scheme) + 3 + strlen(host) + strlen(path)));
+  const char* url_start = url_end;
+  strncpy(url_end, scheme, strlen(scheme));
+  url_end += strlen(scheme);
+  strncpy(url_end, "://", 3);
+  url_end += 3;
+  strncpy(url_end, host, strlen(host));
+  url_end += strlen(host);
+  strncpy(url_end, path, strlen(path));
+  url_end += strlen(path);
+
+  url_parse(req_headers.m_heap, req_headers.m_http->u.req.m_url_impl, &url_start, url_end, 1);
+
+  int32_t version = HTTP_VERSION(1, 1);
+  http_hdr_version_set(req_headers.m_http, version);
+
+  return PARSE_DONE;
 }
 
 void

@@ -29,6 +29,7 @@
 #include "SpdyCallbacks.h"
 #include <openssl/md5.h>
 #include "Plugin.h"
+#include "HTTP.h"
 
 class SpdyClientSession;
 typedef int (*SpdyClientSessionHandler) (TSCont contp, TSEvent event, void *data);
@@ -73,6 +74,8 @@ public:
   int fetch_data_len;
   unsigned delta_window_size;
   bool fetch_body_completed;
+
+  string url;
   HTTPHdr req_headers;
 
   MD5_CTX recv_md5;

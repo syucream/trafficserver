@@ -54,7 +54,7 @@ spdy_prepare_status_response_and_clean_request(SpdyClientSession *sm, int stream
 {
   SpdyRequest *req = sm->req_map[stream_id];
   string date_str = http_date(time(0));
-  const char **nv = new const char*[8+req->headers.size()*2+1];
+  const char **nv = new const char*[8+req->req_headers.fields_count()*2+1];
 
   nv[0] = ":status";
   nv[1] = status;
@@ -65,11 +65,19 @@ spdy_prepare_status_response_and_clean_request(SpdyClientSession *sm, int stream
   nv[6] = "date";
   nv[7] = date_str.c_str();
 
-  for(size_t i = 0; i < req->headers.size(); ++i) {
-    nv[8+i*2] = req->headers[i].first.c_str();
-    nv[8+i*2+1] = req->headers[i].second.c_str();
+  MIMEField *field;
+  MIMEFieldIter field_iter;
+  int i = 0;
+  for (field = req->req_headers.iter_get_first(&field_iter); field != NULL; field = req->req_headers.iter_get_next(&field_iter)) {
+    int name_len = 0, value_len = 0;
+
+    const char* name  = field->name_get(&name_len);
+    const char* value = field->value_get(&value_len);
+    nv[8+i*2] = name;
+    nv[8+i*2+1] = value;
+    i += 2;
   }
-  nv[8+req->headers.size()*2] = 0;
+  nv[8+req->req_headers.fields_count()*2] = 0;
 
   int r = spdylay_submit_response(sm->session, stream_id, nv, NULL);
   TSAssert(r == 0);
@@ -168,15 +176,16 @@ spdy_show_ctl_frame(const char *head_str, spdylay_session * /*session*/, spdylay
 static int
 spdy_fetcher_launch(SpdyRequest *req)
 {
-  string url;
   int fetch_flags;
   const sockaddr *client_addr;
   SpdyClientSession *sm = req->spdy_sm;
 
-  url = req->scheme + "://" + req->host + req->path;
+  int c_url_length = 0;
+  const char* c_url = req->req_headers.url_get()->string_get_ref(&c_url_length);
+  string url(c_url, c_url_length);
+  req->url = url;
   client_addr = TSNetVConnRemoteAddrGet(reinterpret_cast<TSVConn>(sm->vc));
 
-  req->url = url;
   Debug("spdy", "++++Request[%" PRIu64 ":%d] %s", sm->sm_id, req->stream_id, req->url.c_str());
 
   //
@@ -187,22 +196,24 @@ spdy_fetcher_launch(SpdyRequest *req)
   // TS-2906: FetchSM sets requests are internal requests, we need to not do that for SPDY streams.
   fetch_flags |= TS_FETCH_FLAGS_NOT_INTERNAL_REQUEST;
 
-  req->fetch_sm = TSFetchCreate((TSCont)sm, req->method.c_str(),
-                                url.c_str(), req->version.c_str(),
+  int c_method_length = 0;
+  const char* c_method = req->req_headers.method_get(&c_method_length);
+  req->fetch_sm = TSFetchCreate((TSCont)sm, c_method,
+                                url.c_str(), "HTTP/1.1",
                                 client_addr, fetch_flags);
   TSFetchUserDataSet(req->fetch_sm, req);
 
   //
   // Set header list
   //
-  for (size_t i = 0; i < req->headers.size(); i++) {
+  MIMEField *field;
+  MIMEFieldIter field_iter;
+  for (field = req->req_headers.iter_get_first(&field_iter); field != NULL; field = req->req_headers.iter_get_next(&field_iter)) {
+    int name_len = 0, value_len = 0;
 
-    if (*req->headers[i].first.c_str() == ':')
-      continue;
-
-    TSFetchHeaderAdd(req->fetch_sm,
-                     req->headers[i].first.c_str(), req->headers[i].first.size(),
-                     req->headers[i].second.c_str(), req->headers[i].second.size());
+    const char* name  = field->name_get(&name_len);
+    const char* value = field->value_get(&value_len);
+    TSFetchHeaderAdd(req->fetch_sm, name, name_len, value, value_len);
   }
 
   TSFetchLaunch(req->fetch_sm);
@@ -272,24 +283,8 @@ static void
 spdy_process_syn_stream_frame(SpdyClientSession *sm, SpdyRequest *req)
 {
   // validate request headers
-  for(size_t i = 0; i < req->headers.size(); ++i) {
-    const std::string &field = req->headers[i].first;
-    const std::string &value = req->headers[i].second;
-
-    if(field == ":path")
-      req->path = value;
-    else if(field == ":method")
-      req->method = value;
-    else if(field == ":scheme")
-      req->scheme = value;
-    else if(field == ":version")
-      req->version = value;
-    else if(field == ":host")
-      req->host = value;
-  }
-
-  if(!req->path.size()|| !req->method.size() || !req->scheme.size()
-     || !req->version.size() || !req->host.size()) {
+  // TODO Do more strict checking
+  if (!req->req_headers.valid()) {
     spdy_prepare_status_response_and_clean_request(sm, req->stream_id, STATUS_400);
     return;
   }
