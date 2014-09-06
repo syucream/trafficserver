@@ -655,6 +655,8 @@ public:
   MIMEParseResult parse_req(HTTPParser *parser, IOBufferReader *r, int *bytes_used, bool eof);
   MIMEParseResult parse_resp(HTTPParser *parser, IOBufferReader *r, int *bytes_used, bool eof);
 
+  MIMEParseResult parse_spdy_req(char** nv);
+
 public:
   // Utility routines
   bool is_cache_control_set(const char *cc_directive_wks);

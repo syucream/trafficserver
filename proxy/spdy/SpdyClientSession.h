@@ -61,7 +61,6 @@ public:
 
   void init(SpdyClientSession *sm, int id);
   void clear();
-  MIMEParseResult parse_spdy_req(char **nv);
 
 public:
   int event;

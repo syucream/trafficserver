@@ -173,6 +173,7 @@ spdy_show_ctl_frame(const char *head_str, spdylay_session * /*session*/, spdylay
   return;
 }
 
+/*
 static int
 spdy_fetcher_launch(SpdyRequest *req)
 {
@@ -219,6 +220,7 @@ spdy_fetcher_launch(SpdyRequest *req)
   TSFetchLaunch(req->fetch_sm);
   return 0;
 }
+*/
 
 ssize_t
 spdy_send_callback(spdylay_session * /*session*/, const uint8_t *data, size_t length,
@@ -284,12 +286,12 @@ spdy_process_syn_stream_frame(SpdyClientSession *sm, SpdyRequest *req)
 {
   // validate request headers
   // TODO Do more strict checking
-  if (!req->req_headers.valid()) {
-    spdy_prepare_status_response_and_clean_request(sm, req->stream_id, STATUS_400);
-    return;
-  }
+  // if (!req->req_headers.valid()) {
+  //   spdy_prepare_status_response_and_clean_request(sm, req->stream_id, STATUS_400);
+  //   return;
+  // }
 
-  spdy_fetcher_launch(req);
+  // spdy_fetcher_launch(req);
 }
 
 void
@@ -308,7 +310,7 @@ spdy_on_ctrl_recv_callback(spdylay_session *session, spdylay_frame_type type,
     stream_id = frame->syn_stream.stream_id;
     req = spdyRequestAllocator.alloc();
     req->init(sm, stream_id);
-    req->parse_spdy_req(frame->syn_stream.nv);
+
     sm->req_map[stream_id] = req;
     spdy_process_syn_stream_frame(sm, req);
     break;
@@ -316,7 +318,6 @@ spdy_on_ctrl_recv_callback(spdylay_session *session, spdylay_frame_type type,
   case SPDYLAY_HEADERS:
     stream_id = frame->syn_stream.stream_id;
     req = sm->req_map[stream_id];
-    req->parse_spdy_req(frame->headers.nv);
     break;
 
   case SPDYLAY_WINDOW_UPDATE:
