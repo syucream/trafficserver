@@ -30,6 +30,7 @@
 #include <openssl/md5.h>
 #include "Plugin.h"
 #include "HTTP.h"
+#include "HttpFetchSM.h"
 
 class SpdyClientSession;
 typedef int (*SpdyClientSessionHandler) (TSCont contp, TSEvent event, void *data);
@@ -67,7 +68,6 @@ public:
   SpdyClientSession *spdy_sm;
   int stream_id;
   TSHRTime start_time;
-  TSFetchSM fetch_sm;
   bool has_submitted_data;
   bool need_resume_data;
   int fetch_data_len;
@@ -75,7 +75,8 @@ public:
   bool fetch_body_completed;
 
   string url;
-  HTTPHdr req_headers;
+  HTTPHdr* req_headers;
+  HttpFetchSM* fetch_sm;
 
   MD5_CTX recv_md5;
 };

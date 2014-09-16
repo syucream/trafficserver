@@ -54,7 +54,7 @@ spdy_prepare_status_response_and_clean_request(SpdyClientSession *sm, int stream
 {
   SpdyRequest *req = sm->req_map[stream_id];
   string date_str = http_date(time(0));
-  const char **nv = new const char*[8+req->req_headers.fields_count()*2+1];
+  const char **nv = new const char*[8+req->req_headers->fields_count()*2+1];
 
   nv[0] = ":status";
   nv[1] = status;
@@ -68,7 +68,7 @@ spdy_prepare_status_response_and_clean_request(SpdyClientSession *sm, int stream
   MIMEField *field;
   MIMEFieldIter field_iter;
   int i = 0;
-  for (field = req->req_headers.iter_get_first(&field_iter); field != NULL; field = req->req_headers.iter_get_next(&field_iter)) {
+  for (field = req->req_headers->iter_get_first(&field_iter); field != NULL; field = req->req_headers->iter_get_next(&field_iter)) {
     int name_len = 0, value_len = 0;
 
     const char* name  = field->name_get(&name_len);
@@ -77,7 +77,7 @@ spdy_prepare_status_response_and_clean_request(SpdyClientSession *sm, int stream
     nv[8+i*2+1] = value;
     i += 2;
   }
-  nv[8+req->req_headers.fields_count()*2] = 0;
+  nv[8+req->req_headers->fields_count()*2] = 0;
 
   int r = spdylay_submit_response(sm->session, stream_id, nv, NULL);
   TSAssert(r == 0);
@@ -292,6 +292,8 @@ spdy_process_syn_stream_frame(SpdyClientSession *sm, SpdyRequest *req)
   // }
 
   // spdy_fetcher_launch(req);
+  req->fetch_sm->set_user_data(req);
+  req->fetch_sm->start_with_parsed_headers(sm);
 }
 
 void
@@ -310,6 +312,8 @@ spdy_on_ctrl_recv_callback(spdylay_session *session, spdylay_frame_type type,
     stream_id = frame->syn_stream.stream_id;
     req = spdyRequestAllocator.alloc();
     req->init(sm, stream_id);
+    req->req_headers->create(HTTP_TYPE_REQUEST);
+    req->req_headers->parse_spdy_req(frame->syn_stream.nv);
 
     sm->req_map[stream_id] = req;
     spdy_process_syn_stream_frame(sm, req);
@@ -318,6 +322,7 @@ spdy_on_ctrl_recv_callback(spdylay_session *session, spdylay_frame_type type,
   case SPDYLAY_HEADERS:
     stream_id = frame->syn_stream.stream_id;
     req = sm->req_map[stream_id];
+    req->req_headers->parse_spdy_req(frame->syn_stream.nv);
     break;
 
   case SPDYLAY_WINDOW_UPDATE:
@@ -356,7 +361,7 @@ spdy_on_data_chunk_recv_callback(spdylay_session * /*session*/, uint8_t /*flags*
     return;
 
   Debug("spdy", "++++Fetcher Append Data, len:%zu", len);
-  TSFetchWriteData(req->fetch_sm, data, len);
+  // TSFetchWriteData(req->fetch_sm, data, len);
 
   return;
 }

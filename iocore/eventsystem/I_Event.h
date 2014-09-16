@@ -76,6 +76,7 @@
 #define HTTP2_SESSION_EVENTS_START                2250
 #define HTTP_TUNNEL_EVENTS_START                  2300
 #define HTTP_SCH_UPDATE_EVENTS_START              2400
+#define HTTP_FETCH_EVENTS_START                   2500
 #define NT_ASYNC_CONNECT_EVENT_EVENTS_START       3000
 #define NT_ASYNC_IO_EVENT_EVENTS_START            3100
 #define RAFT_EVENT_EVENTS_START                   3200

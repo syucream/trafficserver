@@ -195,7 +195,6 @@ traffic_server_LDFLAGS = @EXTRA_CXX_LDFLAGS@ @LIBTOOL_LINK_FLAGS@
 traffic_server_LDADD = \
   http/libhttp.a \
   http2/libhttp2.a \
-  spdy/libspdy.a \
   http/remap/libhttp_remap.a \
   congest/libCongestionControl.a \
   logging/liblogging.a \

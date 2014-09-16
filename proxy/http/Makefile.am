@@ -32,7 +32,8 @@ AM_CPPFLAGS = \
   -I$(top_srcdir)/proxy/shared \
   -I$(top_srcdir)/proxy/http/remap \
   -I$(top_srcdir)/proxy/logging \
-  -I$(top_srcdir)/proxy/spdy
+  -I$(top_srcdir)/proxy/spdy \
+  @SPDYLAY_CFLAGS@
 
 noinst_HEADERS = HttpProxyServerMain.h
 noinst_LIBRARIES = libhttp.a
@@ -71,7 +72,21 @@ libhttp_a_SOURCES = \
   HttpTunnel.cc \
   HttpTunnel.h \
   HttpUpdateSM.cc \
-  HttpUpdateSM.h
+  HttpUpdateSM.h \
+  HttpFetchSM.cc \
+  HttpFetchSM.h \
+  ../spdy/SpdySessionAccept.h \
+  ../spdy/SpdySessionAccept.cc
+
+if BUILD_SPDY
+libhttp_a_SOURCES += \
+  ../spdy/SpdyCallbacks.cc \
+  ../spdy/SpdyCallbacks.h \
+  ../spdy/SpdyClientSession.cc \
+  ../spdy/SpdyClientSession.h \
+  ../spdy/SpdyCommon.cc \
+  ../spdy/SpdyCommon.h
+endif
 
 if BUILD_TESTS
   libhttp_a_SOURCES += HttpUpdateTester.cc \

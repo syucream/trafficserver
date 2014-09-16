@@ -2144,6 +2144,9 @@ HTTPHdr::parse_spdy_req(char** nv)
       int len = strlen(nv[i+1]);
       int method_wks_idx = hdrtoken_tokenize(nv[i+1], len);
       http_hdr_method_set(m_heap, m_http, nv[i+1], method_wks_idx, len, 1);
+    } else if (strncmp(nv[i], ":version", 8) == 0) {
+      int32_t version = HTTP_VERSION(1, 1);
+      http_hdr_version_set(m_http, version);
     } else {
       int field_name_wks_idx = hdrtoken_tokenize(nv[i], strlen(nv[i]));
       MIMEField *field = mime_field_create(m_heap, m_http->m_fields_impl);
@@ -2169,8 +2172,6 @@ HTTPHdr::parse_spdy_req(char** nv)
   url_parse(m_heap, m_http->u.req.m_url_impl, &url_start, url_end, 1);
   // ats_free(url_start);
 
-  int32_t version = HTTP_VERSION(1, 1);
-  http_hdr_version_set(m_http, version);
 
   return PARSE_DONE;
 }

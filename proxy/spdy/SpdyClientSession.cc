@@ -46,7 +46,7 @@ static char const* const  npnmap[] = {
 static int spdy_process_read(TSEvent event, SpdyClientSession *sm);
 static int spdy_process_write(TSEvent event, SpdyClientSession *sm);
 static int spdy_process_fetch(TSEvent event, SpdyClientSession *sm, void *edata);
-static int spdy_process_fetch_header(TSEvent event, SpdyClientSession *sm, TSFetchSM fetch_sm);
+static int spdy_process_fetch_header(int event, SpdyClientSession *sm, HttpFetchSM* fetch_sm);
 static int spdy_process_fetch_body(TSEvent event, SpdyClientSession *sm, TSFetchSM fetch_sm);
 static uint64_t g_sm_id = 1;
 
@@ -55,12 +55,29 @@ SpdyRequest::init(SpdyClientSession *sm, int id)
 {
   spdy_sm = sm;
   stream_id = id;
-  req_headers.create(HTTP_TYPE_REQUEST);
 
   MD5_Init(&recv_md5);
   start_time = TShrtime();
 
   SPDY_INCREMENT_THREAD_DYN_STAT(SPDY_STAT_CURRENT_CLIENT_STREAM_COUNT, sm->mutex->thread_holding);
+
+  fetch_sm = HttpFetchSM::allocate();
+  fetch_sm->init(sm);
+  req_headers = fetch_sm->get_headers_ref();
+
+  sockaddr const* client_ip = sm->vc->get_remote_addr();
+  const AclRecord *acl_record = IpAllow::AllMethodAcl();
+  HostResPreferenceOrder host_res_preference;
+  memcpy(host_res_preference, host_res_default_preference_order, sizeof(host_res_preference));
+  
+  HttpClientSession *new_session = THREAD_ALLOC_INIT(httpClientSessionAllocator, this_ethread());
+  new_session->host_res_style = ats_host_res_from(client_ip->sa_family, host_res_preference);
+  new_session->acl_record = acl_record;
+
+  new_session->new_connection(sm->vc, NULL,
+      NULL, false);
+
+  fetch_sm->ua_session = new_session;
 }
 
 void
@@ -68,10 +85,10 @@ SpdyRequest::clear()
 {
   SPDY_DECREMENT_THREAD_DYN_STAT(SPDY_STAT_CURRENT_CLIENT_STREAM_COUNT, spdy_sm->mutex->thread_holding);
 
-  if (fetch_sm) {
-    TSFetchDestroy(fetch_sm);
-    fetch_sm = NULL;
-  }
+  // if (fetch_sm) {
+  //   TSFetchDestroy(fetch_sm);
+  //   fetch_sm = NULL;
+  // }
 
   Debug("spdy", "****Delete Request[%" PRIu64 ":%d]", spdy_sm->sm_id, stream_id);
 }
@@ -223,6 +240,14 @@ SpdyClientSession::state_session_readwrite(int event, void * edata)
 
   this->event = event;
 
+  if (event == HTTP_FETCH_EVENT_RESPONSE_HEADER) {
+    // Send response header
+    HttpFetchSM* fetch_sm = static_cast<HttpFetchSM*>(edata);
+    spdy_process_fetch_header(event, this, fetch_sm);
+    ret = 0;
+    goto out;
+  }
+
   if (edata == this->read_vio) {
     Debug("spdy", "++++[READ EVENT]");
     if (event != TS_EVENT_VCONN_READ_READY &&
@@ -311,7 +336,7 @@ spdy_process_fetch(TSEvent event, SpdyClientSession *sm, void *edata)
 
   case TS_FETCH_EVENT_EXT_HEAD_DONE:
     Debug("spdy", "----[FETCH HEADER DONE]");
-    ret = spdy_process_fetch_header(event, sm, fetch_sm);
+    // ret = spdy_process_fetch_header(event, sm, fetch_sm);
     break;
 
   case TS_FETCH_EVENT_EXT_BODY_READY:
@@ -348,18 +373,25 @@ spdy_process_fetch(TSEvent event, SpdyClientSession *sm, void *edata)
 }
 
 static int
-spdy_process_fetch_header(TSEvent /*event*/, SpdyClientSession *sm, TSFetchSM fetch_sm)
+spdy_process_fetch_header(int /*event*/, SpdyClientSession *sm, HttpFetchSM* fetch_sm)
 {
   int ret = -1;
-  SpdyRequest *req = (SpdyRequest *)TSFetchUserDataGet(fetch_sm);
+  SpdyRequest *req = static_cast<SpdyRequest *>(fetch_sm->get_user_data());
 
-  SpdyNV spdy_nv(fetch_sm);
+  const char** nv = static_cast<const char **>(ats_malloc(32));
+  
+  int i = 0;
+  nv[i++] = ":version";
+  nv[i++] = "HTTP/1.1";
+  nv[i++] = ":status";
+  nv[i++] = "200";
+
 
   Debug("spdy", "----spdylay_submit_syn_reply");
   if (sm->session) {
     ret = spdylay_submit_syn_reply(sm->session,
                                  SPDYLAY_CTRL_FLAG_NONE, req->stream_id,
-                                 spdy_nv.nv);
+                                 nv);
   } else {
     Error("spdy_process_fetch_header, sm->session NULL, sm_id %" PRId64 ", fetch_sm %p, stream_id %d, req_time %" PRId64 ", url %s", sm->sm_id, fetch_sm, req->stream_id, req->start_time, req->url.c_str());
   }
@@ -390,7 +422,8 @@ spdy_read_fetch_body_callback(spdylay_session * /*session*/, int32_t stream_id,
     return 0;
   }
 
-  already = TSFetchReadData(req->fetch_sm, buf, length);
+  // Read fetched buffer
+  // already = TSFetchReadData(req->fetch_sm, buf, length);
 
   Debug("spdy", "    stream_id:%d, call:%d, length:%ld, already:%" PRId64,
         stream_id, g_call_cnt, length, already);
