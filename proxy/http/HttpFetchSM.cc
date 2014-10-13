@@ -74,6 +74,9 @@ HttpFetchSM::handle_api_return()
     // Call handleEvent()
     contp->handleEvent(HTTP_FETCH_EVENT_RESPONSE_HEADER, this);
     // perform_cache_write_action();
+
+    // Send response body
+    contp->handleEvent(HTTP_FETCH_EVENT_RESPONSE_BODY, this);
   } else {
     HttpSM::handle_api_return();
   }

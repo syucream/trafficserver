@@ -47,6 +47,11 @@ public:
   void set_user_data(void* data);
   void* get_user_data();
 
+  int64_t memcpy_from_server_reader(uint8_t* buf, size_t len)
+  {
+    return server_buffer_reader->read(buf, len);
+  }
+
 protected:
   Continuation* contp;
   void* user_data;

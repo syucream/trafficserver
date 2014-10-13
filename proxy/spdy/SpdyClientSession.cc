@@ -47,7 +47,7 @@ static int spdy_process_read(TSEvent event, SpdyClientSession *sm);
 static int spdy_process_write(TSEvent event, SpdyClientSession *sm);
 static int spdy_process_fetch(TSEvent event, SpdyClientSession *sm, void *edata);
 static int spdy_process_fetch_header(int event, SpdyClientSession *sm, HttpFetchSM* fetch_sm);
-static int spdy_process_fetch_body(TSEvent event, SpdyClientSession *sm, TSFetchSM fetch_sm);
+static int spdy_process_fetch_body(int event, SpdyClientSession *sm, HttpFetchSM* fetch_sm);
 static uint64_t g_sm_id = 1;
 
 void
@@ -246,7 +246,13 @@ SpdyClientSession::state_session_readwrite(int event, void * edata)
     spdy_process_fetch_header(event, this, fetch_sm);
     ret = 0;
     goto out;
-  }
+  } else if (event == HTTP_FETCH_EVENT_RESPONSE_BODY) {
+    // Send response header
+    HttpFetchSM* fetch_sm = static_cast<HttpFetchSM*>(edata);
+    spdy_process_fetch_body(event, this, fetch_sm);
+    ret = 0;
+    goto out;
+  } 
 
   if (edata == this->read_vio) {
     Debug("spdy", "++++[READ EVENT]");
@@ -264,10 +270,13 @@ SpdyClientSession::state_session_readwrite(int event, void * edata)
       goto out;
     }
     ret = spdy_process_write((TSEvent)event, this);
+  }
+  /*
   } else {
     from_fetch = true;
     ret = spdy_process_fetch((TSEvent)event, this, edata);
   }
+  */
 
   Debug("spdy-event", "++++SpdyClientSession[%" PRIu64 "], EVENT:%d, ret:%d",
         this->sm_id, event, ret);
@@ -341,13 +350,13 @@ spdy_process_fetch(TSEvent event, SpdyClientSession *sm, void *edata)
 
   case TS_FETCH_EVENT_EXT_BODY_READY:
     Debug("spdy", "----[FETCH BODY READY]");
-    ret = spdy_process_fetch_body(event, sm, fetch_sm);
+    // ret = spdy_process_fetch_body(event, sm, fetch_sm);
     break;
 
   case TS_FETCH_EVENT_EXT_BODY_DONE:
     Debug("spdy", "----[FETCH BODY DONE]");
     req->fetch_body_completed = true;
-    ret = spdy_process_fetch_body(event, sm, fetch_sm);
+    // ret = spdy_process_fetch_body(event, sm, fetch_sm);
     break;
 
   default:
@@ -385,6 +394,7 @@ spdy_process_fetch_header(int /*event*/, SpdyClientSession *sm, HttpFetchSM* fet
   nv[i++] = "HTTP/1.1";
   nv[i++] = ":status";
   nv[i++] = "200";
+  nv[i++] = NULL;
 
 
   Debug("spdy", "----spdylay_submit_syn_reply");
@@ -396,6 +406,7 @@ spdy_process_fetch_header(int /*event*/, SpdyClientSession *sm, HttpFetchSM* fet
     Error("spdy_process_fetch_header, sm->session NULL, sm_id %" PRId64 ", fetch_sm %p, stream_id %d, req_time %" PRId64 ", url %s", sm->sm_id, fetch_sm, req->stream_id, req->start_time, req->url.c_str());
   }
 
+  ats_free(nv);
   TSVIOReenable(sm->write_vio);
   return ret;
 }
@@ -407,7 +418,7 @@ spdy_read_fetch_body_callback(spdylay_session * /*session*/, int32_t stream_id,
 {
 
   static int g_call_cnt;
-  int64_t already;
+  int64_t already = 0;
 
   SpdyClientSession *sm = (SpdyClientSession *)user_data;
   SpdyRequest *req = (SpdyRequest *)source->ptr;
@@ -423,7 +434,7 @@ spdy_read_fetch_body_callback(spdylay_session * /*session*/, int32_t stream_id,
   }
 
   // Read fetched buffer
-  // already = TSFetchReadData(req->fetch_sm, buf, length);
+  already += req->fetch_sm->memcpy_from_server_reader(buf, length);
 
   Debug("spdy", "    stream_id:%d, call:%d, length:%ld, already:%" PRId64,
         stream_id, g_call_cnt, length, already);
@@ -435,7 +446,7 @@ spdy_read_fetch_body_callback(spdylay_session * /*session*/, int32_t stream_id,
 
   req->fetch_data_len += already;
   if (already < (int64_t)length) {
-    if (req->event == TS_FETCH_EVENT_EXT_BODY_DONE) {
+    if (req->req_headers->get_content_length() <= req->fetch_data_len) {
       TSHRTime end_time = TShrtime();
       SPDY_SUM_THREAD_DYN_STAT(SPDY_STAT_TOTAL_TRANSACTIONS_TIME, sm->mutex->thread_holding, end_time - req->start_time);
       Debug("spdy", "----Request[%" PRIu64 ":%d] %s %lld %d", sm->sm_id, req->stream_id,
@@ -461,11 +472,11 @@ spdy_read_fetch_body_callback(spdylay_session * /*session*/, int32_t stream_id,
 }
 
 static int
-spdy_process_fetch_body(TSEvent event, SpdyClientSession *sm, TSFetchSM fetch_sm)
+spdy_process_fetch_body(int event, SpdyClientSession *sm, HttpFetchSM* fetch_sm)
 {
   int ret = 0;
   spdylay_data_provider data_prd;
-  SpdyRequest *req = (SpdyRequest *)TSFetchUserDataGet(fetch_sm);
+  SpdyRequest *req = static_cast<SpdyRequest *>(fetch_sm->get_user_data());
   req->event = event;
 
   data_prd.source.ptr = (void *)req;
